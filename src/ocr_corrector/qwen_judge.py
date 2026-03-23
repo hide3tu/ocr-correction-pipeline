@@ -92,6 +92,7 @@ class LlmJudge:
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.0,
             "max_tokens": 16,
+            "enable_thinking": False,
         }).encode("utf-8")
 
         url = f"{self.api_base}/chat/completions"

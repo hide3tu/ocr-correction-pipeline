@@ -93,6 +93,7 @@ class LlmServerProcess:
             "--port", str(self.port),
             "--n-gpu-layers", str(self.n_gpu_layers),
             "--ctx-size", str(self.ctx_size),
+            "--reasoning-budget", "0",  # disable thinking for A/B judgment
         ]
         logger.info("Starting llama-server: %s", " ".join(cmd))
 
