@@ -14,6 +14,7 @@ from .escalation import (
     classify_without_qwen,
 )
 from .gpu_detect import resolve_device
+from .llm_server import LlmServerProcess, find_model, find_server_bin, is_server_running
 from .qwen_judge import LlmJudge
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ class Pipeline:
         self.config = config or PipelineConfig()
         self._scanner: BertScanner | None = None
         self._judge: LlmJudge | None = None
+        self._server: LlmServerProcess | None = None
         self._bert_device: str = "cpu"
 
     def setup(self):
@@ -98,9 +100,35 @@ class Pipeline:
 
         # Connect to LLM (if enabled)
         if self.config.llm_enabled:
+            api_base = self.config.llm_api_base
+
+            # Auto-start llama-server if no server is running
+            if not is_server_running(api_base):
+                server_bin = find_server_bin()
+                model_path = find_model()
+                if server_bin and model_path:
+                    logger.info("No LLM server detected. Auto-starting llama-server...")
+                    self._server = LlmServerProcess(
+                        server_bin=server_bin,
+                        model_path=model_path,
+                        port=8080,
+                        n_gpu_layers=0,  # CPU by default, safe for any env
+                    )
+                    api_base = self._server.start()
+                else:
+                    missing = []
+                    if not server_bin:
+                        missing.append("llama-server binary (run installer)")
+                    if not model_path:
+                        missing.append("GGUF model in llm/models/")
+                    raise RuntimeError(
+                        f"LLM server not running and cannot auto-start. "
+                        f"Missing: {', '.join(missing)}"
+                    )
+
             self._judge = LlmJudge(
                 model=self.config.llm_model,
-                api_base=self.config.llm_api_base,
+                api_base=api_base,
             )
 
     def run(self, text: str) -> PipelineResult:
@@ -172,3 +200,6 @@ class Pipeline:
         if self._judge:
             self._judge.cleanup()
             self._judge = None
+        if self._server:
+            self._server.stop()
+            self._server = None

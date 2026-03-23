@@ -51,9 +51,7 @@ try {
         Write-Host "NVIDIA GPU detected:" -ForegroundColor Green
         Write-Host "  $smiOutput"
     }
-} catch {
-    # nvidia-smi not found
-}
+} catch {}
 
 Write-Host ""
 & python -m pip install --upgrade pip --quiet
@@ -71,9 +69,9 @@ Write-Host ""
 Write-Host "Installing ocr-corrector..."
 & pip install -e .
 
-# Verify
+# Verify Python packages
 Write-Host ""
-Write-Host "=== Verify Installation ===" -ForegroundColor Cyan
+Write-Host "=== Verify Python Packages ===" -ForegroundColor Cyan
 $verifyCode = @'
 import torch
 print(f"  PyTorch: {torch.__version__}")
@@ -88,25 +86,105 @@ Set-Content -Path $tempFile -Value $verifyCode -Encoding UTF8
 & python $tempFile
 Remove-Item $tempFile
 
-# LLM backend info
+# ============================================================
+# Download llama-server
+# ============================================================
 Write-Host ""
-Write-Host "=== LLM Backend ===" -ForegroundColor Cyan
-Write-Host "LLM judgment requires an OpenAI-compatible API server."
-Write-Host "Recommended: llama-server (llama.cpp)" -ForegroundColor Green
-Write-Host "  https://github.com/ggerganov/llama.cpp/releases"
-Write-Host ""
-Write-Host "Start llama-server with a GGUF model:"
-Write-Host "  llama-server -m model.gguf --port 8080 --n-gpu-layers 99"
-Write-Host ""
-Write-Host "Other compatible servers: ollama, LM Studio, vLLM, etc."
-Write-Host "Without LLM, use --no-llm for BERT-only mode."
+Write-Host "=== Setting up llama-server ===" -ForegroundColor Cyan
 
+$llmDir = Join-Path $PWD "llm"
+$modelsDir = Join-Path $llmDir "models"
+if (-not (Test-Path $llmDir)) { New-Item -ItemType Directory -Path $llmDir | Out-Null }
+if (-not (Test-Path $modelsDir)) { New-Item -ItemType Directory -Path $modelsDir | Out-Null }
+
+$serverExe = Join-Path $llmDir "llama-server.exe"
+
+if (Test-Path $serverExe) {
+    Write-Host "llama-server.exe already exists. Skipping download."
+} else {
+    Write-Host "Fetching latest llama.cpp release..."
+    $releaseJson = Invoke-RestMethod -Uri "https://api.github.com/repos/ggerganov/llama.cpp/releases/latest"
+    $tag = $releaseJson.tag_name
+
+    # Pick the right asset: CUDA 12.4 if GPU, otherwise CPU
+    if ($hasNvidia) {
+        $pattern = "win.*cuda.*cu12.*x64\.zip$"
+    } else {
+        $pattern = "win.*x64\.zip$"
+    }
+    $asset = $releaseJson.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
+
+    if (-not $asset) {
+        # Fallback: any windows x64 zip
+        $asset = $releaseJson.assets | Where-Object { $_.name -match "win.*x64\.zip$" } | Select-Object -First 1
+    }
+
+    if (-not $asset) {
+        Write-Host "WARNING: Could not find llama.cpp Windows binary in release $tag" -ForegroundColor Yellow
+        Write-Host "Download manually from: https://github.com/ggerganov/llama.cpp/releases"
+    } else {
+        $zipUrl = $asset.browser_download_url
+        $zipName = $asset.name
+        $zipPath = Join-Path $llmDir $zipName
+
+        Write-Host "Downloading $zipName ($tag)..."
+        Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+
+        Write-Host "Extracting..."
+        Expand-Archive -Path $zipPath -DestinationPath $llmDir -Force
+
+        # Find llama-server.exe in extracted contents
+        $found = Get-ChildItem -Path $llmDir -Recurse -Filter "llama-server.exe" | Select-Object -First 1
+        if ($found -and $found.FullName -ne $serverExe) {
+            Move-Item -Path $found.FullName -Destination $serverExe -Force
+        }
+
+        Remove-Item $zipPath -Force
+        Write-Host "llama-server.exe ready" -ForegroundColor Green
+    }
+}
+
+# ============================================================
+# Download GGUF model
+# ============================================================
+Write-Host ""
+Write-Host "=== Downloading LLM model ===" -ForegroundColor Cyan
+
+$existingGguf = Get-ChildItem -Path $modelsDir -Filter "*.gguf" -ErrorAction SilentlyContinue | Select-Object -First 1
+
+if ($existingGguf) {
+    Write-Host "GGUF model already exists: $($existingGguf.Name). Skipping download."
+} else {
+    # Use huggingface-cli (installed with transformers) to download
+    $hfRepo = "Qwen/Qwen2.5-7B-Instruct-GGUF"
+    $hfFile = "qwen2.5-7b-instruct-q4_k_m.gguf"
+
+    Write-Host "Downloading $hfFile from $hfRepo ..."
+    Write-Host "(This may take a while: ~4.7 GB)"
+    & python -m huggingface_hub.commands.huggingface_cli download $hfRepo $hfFile --local-dir $modelsDir
+
+    # huggingface-cli may put it in a subfolder or use symlinks
+    $dlFile = Get-ChildItem -Path $modelsDir -Recurse -Filter "*.gguf" | Select-Object -First 1
+    if ($dlFile) {
+        if ($dlFile.DirectoryName -ne $modelsDir) {
+            Move-Item -Path $dlFile.FullName -Destination (Join-Path $modelsDir $dlFile.Name) -Force
+        }
+        Write-Host "Model ready: $($dlFile.Name)" -ForegroundColor Green
+    } else {
+        Write-Host "WARNING: Model download may have failed. Place a .gguf file in llm/models/" -ForegroundColor Yellow
+    }
+}
+
+# ============================================================
+# Done
+# ============================================================
 Write-Host ""
 Write-Host "=== Installation Complete ===" -ForegroundColor Green
 Write-Host ""
-Write-Host "Usage:"
+Write-Host "Everything is set up. Just run:" -ForegroundColor Cyan
+Write-Host ""
 Write-Host "  .\.venv\Scripts\Activate.ps1"
-Write-Host "  python -m ocr_corrector input.txt          # With llama-server on :8080"
-Write-Host "  python -m ocr_corrector --no-llm input.txt # BERT-only mode"
-Write-Host "  python -m ocr_corrector --llm-api ollama input.txt  # Use ollama"
-Write-Host "  python -m ocr_corrector --help              # Help"
+Write-Host "  python -m ocr_corrector input.txt"
+Write-Host ""
+Write-Host "llama-server will start automatically when needed."
+Write-Host "For BERT-only mode (no LLM): python -m ocr_corrector --no-llm input.txt"

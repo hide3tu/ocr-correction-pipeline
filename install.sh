@@ -6,7 +6,7 @@ echo ""
 
 # Python 3.10+ check
 if ! command -v python3 &>/dev/null; then
-    echo "ERROR: python3 が見つかりません。Python 3.10以上をインストールしてください。"
+    echo "ERROR: python3 not found. Install Python 3.10+."
     exit 1
 fi
 
@@ -15,53 +15,48 @@ PY_MAJOR=$(python3 -c "import sys; print(sys.version_info.major)")
 PY_MINOR=$(python3 -c "import sys; print(sys.version_info.minor)")
 
 if [ "$PY_MAJOR" -lt 3 ] || ([ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]); then
-    echo "ERROR: Python 3.10以上が必要です（現在: $PY_VERSION）"
+    echo "ERROR: Python 3.10+ required (current: $PY_VERSION)"
     exit 1
 fi
-echo "Python $PY_VERSION 検出"
+echo "Python $PY_VERSION detected"
 
 # Create venv
 if [ -d ".venv" ]; then
-    echo "既存の .venv を検出。再利用します。"
+    echo "Existing .venv found. Reusing."
 else
-    echo "仮想環境を作成中..."
+    echo "Creating virtual environment..."
     python3 -m venv .venv
 fi
 source .venv/bin/activate
-echo "仮想環境を有効化: $(which python)"
 
 # Detect platform and GPU
 OS_NAME="$(uname -s)"
 ARCH="$(uname -m)"
 
+pip install --upgrade pip --quiet
+
 if [[ "$OS_NAME" == "Darwin" ]] && [[ "$ARCH" == "arm64" ]]; then
     echo ""
-    echo "Apple Silicon (MPS) 検出"
-    echo "PyTorch をインストール中..."
-    pip install --upgrade pip
+    echo "Apple Silicon (MPS) detected"
     pip install torch torchvision
 elif command -v nvidia-smi &>/dev/null; then
     echo ""
-    echo "NVIDIA GPU 検出:"
-    nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || true
-    echo "PyTorch (CUDA 12.4) をインストール中..."
-    pip install --upgrade pip
+    echo "NVIDIA GPU detected"
     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 else
     echo ""
-    echo "GPU 未検出。CPU版 PyTorch をインストールします。"
-    pip install --upgrade pip
+    echo "No GPU detected. Installing CPU PyTorch."
     pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 fi
 
-# Install the package
+# Install package
 echo ""
-echo "ocr-corrector をインストール中..."
+echo "Installing ocr-corrector..."
 pip install -e .
 
-# Verify installation
+# Verify
 echo ""
-echo "=== インストール確認 ==="
+echo "=== Verify Python Packages ==="
 python -c "
 import torch
 print(f'  PyTorch: {torch.__version__}')
@@ -72,25 +67,106 @@ import transformers
 print(f'  transformers: {transformers.__version__}')
 "
 
-# LLM backend info
+# ============================================================
+# Download llama-server
+# ============================================================
 echo ""
-echo "=== LLM Backend ==="
-echo "LLM判定にはOpenAI互換APIサーバーが必要です。"
-echo "推奨: llama-server (llama.cpp)"
-echo "  https://github.com/ggerganov/llama.cpp/releases"
-echo ""
-echo "起動例:"
-echo "  llama-server -m model.gguf --port 8080 --n-gpu-layers 99"
-echo ""
-echo "他の互換サーバー: ollama, LM Studio, vLLM 等も使用可"
-echo "LLMなしでも --no-llm でBERTのみモードが使えます。"
+echo "=== Setting up llama-server ==="
 
+mkdir -p llm/models
+
+if [ -f "llm/llama-server" ]; then
+    echo "llama-server already exists. Skipping download."
+else
+    echo "Fetching latest llama.cpp release..."
+    RELEASE_JSON=$(curl -sL "https://api.github.com/repos/ggerganov/llama.cpp/releases/latest")
+    TAG=$(echo "$RELEASE_JSON" | python -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")
+
+    # Determine asset pattern
+    if [[ "$OS_NAME" == "Darwin" ]] && [[ "$ARCH" == "arm64" ]]; then
+        PATTERN="macos-arm64.zip"
+    elif [[ "$OS_NAME" == "Darwin" ]]; then
+        PATTERN="macos-x64.zip"
+    elif command -v nvidia-smi &>/dev/null; then
+        PATTERN="linux-x64-cuda.*\.tar\.gz"
+    else
+        PATTERN="linux-x64\.tar\.gz"
+    fi
+
+    ASSET_URL=$(echo "$RELEASE_JSON" | python -c "
+import sys, json, re
+data = json.load(sys.stdin)
+for a in data['assets']:
+    if re.search(r'$PATTERN', a['name']):
+        print(a['browser_download_url'])
+        break
+")
+
+    if [ -z "$ASSET_URL" ]; then
+        echo "WARNING: Could not find llama.cpp binary for this platform in release $TAG"
+        echo "Download manually from: https://github.com/ggerganov/llama.cpp/releases"
+    else
+        FILENAME=$(basename "$ASSET_URL")
+        echo "Downloading $FILENAME ($TAG)..."
+        curl -L -o "llm/$FILENAME" "$ASSET_URL"
+
+        echo "Extracting..."
+        cd llm
+        if [[ "$FILENAME" == *.zip ]]; then
+            unzip -o "$FILENAME"
+        else
+            tar xzf "$FILENAME"
+        fi
+
+        # Find and move llama-server
+        FOUND=$(find . -name "llama-server" -type f | head -1)
+        if [ -n "$FOUND" ] && [ "$FOUND" != "./llama-server" ]; then
+            mv "$FOUND" ./llama-server
+            chmod +x ./llama-server
+        fi
+
+        rm -f "$FILENAME"
+        cd ..
+        echo "llama-server ready"
+    fi
+fi
+
+# ============================================================
+# Download GGUF model
+# ============================================================
 echo ""
-echo "=== インストール完了 ==="
+echo "=== Downloading LLM model ==="
+
+EXISTING_GGUF=$(find llm/models -name "*.gguf" 2>/dev/null | head -1)
+
+if [ -n "$EXISTING_GGUF" ]; then
+    echo "GGUF model already exists: $(basename $EXISTING_GGUF). Skipping download."
+else
+    HF_REPO="Qwen/Qwen2.5-7B-Instruct-GGUF"
+    HF_FILE="qwen2.5-7b-instruct-q4_k_m.gguf"
+
+    echo "Downloading $HF_FILE from $HF_REPO ..."
+    echo "(This may take a while: ~4.7 GB)"
+    python -m huggingface_hub.commands.huggingface_cli download "$HF_REPO" "$HF_FILE" --local-dir llm/models
+
+    FOUND_GGUF=$(find llm/models -name "*.gguf" | head -1)
+    if [ -n "$FOUND_GGUF" ]; then
+        echo "Model ready: $(basename $FOUND_GGUF)"
+    else
+        echo "WARNING: Model download may have failed. Place a .gguf file in llm/models/"
+    fi
+fi
+
+# ============================================================
+# Done
+# ============================================================
 echo ""
-echo "使い方:"
+echo "=== Installation Complete ==="
+echo ""
+echo "Everything is set up. Just run:"
+echo ""
 echo "  source .venv/bin/activate"
-echo "  python -m ocr_corrector input.txt          # llama-server :8080で校正"
-echo "  python -m ocr_corrector --no-llm input.txt # BERTのみモード"
-echo "  python -m ocr_corrector --llm-api ollama input.txt  # ollamaを使う場合"
-echo "  python -m ocr_corrector --help              # ヘルプ"
+echo "  python -m ocr_corrector input.txt"
+echo ""
+echo "llama-server will start automatically when needed."
+echo "For BERT-only mode (no LLM): python -m ocr_corrector --no-llm input.txt"

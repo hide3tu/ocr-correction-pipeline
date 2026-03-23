@@ -10,3 +10,5 @@ build/
 *.bin
 *.safetensors
 .ruff_cache/
+llm/
+*.gguf
