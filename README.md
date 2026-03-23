@@ -29,9 +29,18 @@ Apple Silicon (M1/M2/M3/M4) は統合メモリなのでVRAM制約なし。
 
 ### Windows
 
+PowerShell（Windows標準搭載）で実行。PowerShell 7は不要。
+
+PythonもGitも入っていなければインストーラーがwinget経由で自動インストールする。
+
 ```powershell
+# まだリポジトリを取得していない場合（Gitがあるなら）
 git clone https://github.com/hide3tu/ocr-correction-pipeline.git
 cd ocr-correction-pipeline
+
+# GitがなければGitHubからZIPダウンロード→展開でもOK
+
+# インストール
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
@@ -45,12 +54,15 @@ bash install.sh
 
 インストーラーが自動で行うこと:
 
-1. Python 3.10以上の確認
-2. venv作成 + GPU検出に応じたPyTorchインストール
-3. BERT関連パッケージ（transformers, fugashi, unidic-lite等）
-4. NDLOCR-Lite（OCRエンジン、git clone + 依存インストール）
-5. llama-serverバイナリ（llama.cpp最新リリースから自動ダウンロード）
-6. LLMモデル（Qwen3.5-4B Q4_K_M、HuggingFaceから自動ダウンロード）
+1. **Python** — 未インストールならwinget経由で自動インストール（Windows）
+2. **Git** — 未インストールならwinget経由で自動インストール（Windows）
+3. venv作成 + GPU検出に応じたPyTorchインストール
+4. BERT関連パッケージ（transformers, fugashi, unidic-lite等）
+5. NDLOCR-Lite（OCRエンジン、git clone + 依存インストール）
+6. llama-serverバイナリ（llama.cpp最新リリースから自動ダウンロード）
+7. LLMモデル（Qwen3.5-4B Q4_K_M、HuggingFaceから自動ダウンロード）
+
+Windowsの場合、PythonもGitも入っていない状態からインストーラーだけで全部揃う。
 
 ## 使い方
 

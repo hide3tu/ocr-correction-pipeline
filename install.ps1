@@ -6,23 +6,64 @@ $ErrorActionPreference = "Stop"
 Write-Host "=== OCR Correction Pipeline Installer ===" -ForegroundColor Cyan
 Write-Host ""
 
-# Python 3.10+ check
+# Python 3.10+ check / auto-install
+$hasPython = $false
 try {
     $null = Get-Command python -ErrorAction Stop
+    $pyMajor = & python -c "import sys; print(sys.version_info.major)" 2>&1
+    $pyMinor = & python -c "import sys; print(sys.version_info.minor)" 2>&1
+    if ([int]$pyMajor -ge 3 -and [int]$pyMinor -ge 10) {
+        $hasPython = $true
+        Write-Host "Python $pyMajor.$pyMinor detected"
+    } else {
+        Write-Host "Python $pyMajor.$pyMinor found but 3.10+ required" -ForegroundColor Yellow
+    }
+} catch {}
+
+if (-not $hasPython) {
+    Write-Host ""
+    Write-Host "Python 3.12 to install..." -ForegroundColor Cyan
+    try {
+        $null = Get-Command winget -ErrorAction Stop
+        Write-Host "winget detected. Installing Python 3.12..."
+        & winget install Python.Python.3.12 --accept-package-agreements --accept-source-agreements
+        # Refresh PATH
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+        # Verify
+        $null = Get-Command python -ErrorAction Stop
+        $pyMajor = & python -c "import sys; print(sys.version_info.major)" 2>&1
+        $pyMinor = & python -c "import sys; print(sys.version_info.minor)" 2>&1
+        Write-Host "Python $pyMajor.$pyMinor installed" -ForegroundColor Green
+    } catch {
+        Write-Host ""
+        Write-Host "Python auto-install failed." -ForegroundColor Red
+        Write-Host "Download Python 3.12 from:" -ForegroundColor Yellow
+        Write-Host "  https://www.python.org/downloads/" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "IMPORTANT: Check 'Add python.exe to PATH' during installation." -ForegroundColor Yellow
+        Write-Host "After installing Python, run this script again."
+        exit 1
+    }
+}
+
+# Git check (needed for NDLOCR-Lite clone)
+try {
+    $null = Get-Command git -ErrorAction Stop
 } catch {
-    Write-Host "ERROR: python not found. Install Python 3.10+." -ForegroundColor Red
-    exit 1
+    Write-Host ""
+    Write-Host "Git not found. Installing..." -ForegroundColor Cyan
+    try {
+        & winget install Git.Git --accept-package-agreements --accept-source-agreements
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+        $null = Get-Command git -ErrorAction Stop
+        Write-Host "Git installed" -ForegroundColor Green
+    } catch {
+        Write-Host "Git auto-install failed." -ForegroundColor Red
+        Write-Host "Download from: https://git-scm.com/download/win" -ForegroundColor Cyan
+        Write-Host "After installing Git, run this script again."
+        exit 1
+    }
 }
-
-$pyMajor = & python -c "import sys; print(sys.version_info.major)" 2>&1
-$pyMinor = & python -c "import sys; print(sys.version_info.minor)" 2>&1
-$pyVersionRaw = "$pyMajor.$pyMinor"
-
-if ([int]$pyMajor -lt 3 -or ([int]$pyMajor -eq 3 -and [int]$pyMinor -lt 10)) {
-    Write-Host "ERROR: Python 3.10+ required (current: $pyVersionRaw)" -ForegroundColor Red
-    exit 1
-}
-Write-Host "Python $pyVersionRaw detected"
 
 # Create venv
 if (Test-Path ".venv") {
