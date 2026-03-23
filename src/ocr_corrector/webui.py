@@ -167,7 +167,7 @@ def create_app():
                             type="filepath",
                             label="画像ファイル",
                         )
-                        gr.Markdown("*画像入力にはndlocr-liteのインストールが必要です*")
+                        gr.Markdown("*画像からOCRテキストを抽出して校正します*")
 
                 run_btn = gr.Button("校正実行", variant="primary", size="lg")
                 status_text = gr.Textbox(label="ステータス", interactive=False)

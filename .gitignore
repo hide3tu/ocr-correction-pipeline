@@ -12,3 +12,4 @@ build/
 .ruff_cache/
 llm/
 *.gguf
+ndlocr-lite/

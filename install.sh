@@ -54,6 +54,18 @@ echo ""
 echo "Installing ocr-corrector..."
 pip install -e .
 
+# Install NDLOCR-Lite (OCR frontend)
+echo ""
+echo "=== Setting up NDLOCR-Lite ==="
+if [ -d "ndlocr-lite" ]; then
+    echo "ndlocr-lite already exists. Skipping clone."
+else
+    echo "Cloning ndlocr-lite..."
+    git clone https://github.com/ndl-lab/ndlocr-lite.git
+fi
+echo "Installing ndlocr-lite dependencies..."
+pip install -r ndlocr-lite/requirements.txt
+
 # Verify
 echo ""
 echo "=== Verify Python Packages ==="

@@ -69,6 +69,19 @@ Write-Host ""
 Write-Host "Installing ocr-corrector..."
 & pip install -e .
 
+# Install NDLOCR-Lite (OCR frontend)
+Write-Host ""
+Write-Host "=== Setting up NDLOCR-Lite ===" -ForegroundColor Cyan
+$ndlocrDir = Join-Path $PWD "ndlocr-lite"
+if (Test-Path $ndlocrDir) {
+    Write-Host "ndlocr-lite already exists. Skipping clone."
+} else {
+    Write-Host "Cloning ndlocr-lite..."
+    & git clone https://github.com/ndl-lab/ndlocr-lite.git
+}
+Write-Host "Installing ndlocr-lite dependencies..."
+& pip install -r (Join-Path $ndlocrDir "requirements.txt")
+
 # Verify Python packages
 Write-Host ""
 Write-Host "=== Verify Python Packages ===" -ForegroundColor Cyan
