@@ -12,7 +12,7 @@ class PipelineConfig:
     bert_threshold: float = 0.01  # tokens below this probability are flagged
 
     # LLM settings (any OpenAI-compatible endpoint)
-    llm_model: str = "qwen3.5:4b"
+    llm_model: str = "qwen2.5-7b-instruct-q3_k_m.gguf"
     llm_enabled: bool = True
     llm_api_base: str = "http://localhost:8080/v1"  # llama-server default
 

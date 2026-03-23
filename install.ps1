@@ -106,17 +106,17 @@ if (Test-Path $serverExe) {
     $releaseJson = Invoke-RestMethod -Uri "https://api.github.com/repos/ggerganov/llama.cpp/releases/latest"
     $tag = $releaseJson.tag_name
 
-    # Pick the right asset: CUDA 12.4 if GPU, otherwise CPU
+    # Pick the right asset: llama-b{ver}-bin-win-cuda or cpu
+    # Exclude cudart-only packages (they don't contain llama-server)
     if ($hasNvidia) {
-        $pattern = "win.*cuda.*cu12.*x64\.zip$"
-    } else {
-        $pattern = "win.*x64\.zip$"
+        $asset = $releaseJson.assets | Where-Object {
+            $_.name -match "^llama-.*bin-win-cuda-12.*x64\.zip$"
+        } | Select-Object -First 1
     }
-    $asset = $releaseJson.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
-
     if (-not $asset) {
-        # Fallback: any windows x64 zip
-        $asset = $releaseJson.assets | Where-Object { $_.name -match "win.*x64\.zip$" } | Select-Object -First 1
+        $asset = $releaseJson.assets | Where-Object {
+            $_.name -match "^llama-.*bin-win-cpu-x64\.zip$"
+        } | Select-Object -First 1
     }
 
     if (-not $asset) {
@@ -155,15 +155,27 @@ $existingGguf = Get-ChildItem -Path $modelsDir -Filter "*.gguf" -ErrorAction Sil
 if ($existingGguf) {
     Write-Host "GGUF model already exists: $($existingGguf.Name). Skipping download."
 } else {
-    # Use huggingface-cli (installed with transformers) to download
     $hfRepo = "Qwen/Qwen2.5-7B-Instruct-GGUF"
-    $hfFile = "qwen2.5-7b-instruct-q4_k_m.gguf"
+    $hfFile = "qwen2.5-7b-instruct-q3_k_m.gguf"
 
     Write-Host "Downloading $hfFile from $hfRepo ..."
-    Write-Host "(This may take a while: ~4.7 GB)"
-    & python -m huggingface_hub.commands.huggingface_cli download $hfRepo $hfFile --local-dir $modelsDir
+    Write-Host "(~3.3 GB, this will take a while)"
 
-    # huggingface-cli may put it in a subfolder or use symlinks
+    $dlCode = @'
+from huggingface_hub import hf_hub_download
+import sys
+path = hf_hub_download(
+    repo_id=sys.argv[1],
+    filename=sys.argv[2],
+    local_dir=sys.argv[3],
+)
+print(path)
+'@
+    $dlTmp = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "hf_dl.py")
+    Set-Content -Path $dlTmp -Value $dlCode -Encoding UTF8
+    $dlResult = & python $dlTmp $hfRepo $hfFile $modelsDir 2>&1
+    Remove-Item $dlTmp
+
     $dlFile = Get-ChildItem -Path $modelsDir -Recurse -Filter "*.gguf" | Select-Object -First 1
     if ($dlFile) {
         if ($dlFile.DirectoryName -ne $modelsDir) {
@@ -171,7 +183,7 @@ if ($existingGguf) {
         }
         Write-Host "Model ready: $($dlFile.Name)" -ForegroundColor Green
     } else {
-        Write-Host "WARNING: Model download may have failed. Place a .gguf file in llm/models/" -ForegroundColor Yellow
+        Write-Host "WARNING: Model download failed. Place a .gguf file in llm/models/" -ForegroundColor Yellow
     }
 }
 

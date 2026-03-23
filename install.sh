@@ -143,17 +143,22 @@ if [ -n "$EXISTING_GGUF" ]; then
     echo "GGUF model already exists: $(basename $EXISTING_GGUF). Skipping download."
 else
     HF_REPO="Qwen/Qwen2.5-7B-Instruct-GGUF"
-    HF_FILE="qwen2.5-7b-instruct-q4_k_m.gguf"
+    HF_FILE="qwen2.5-7b-instruct-q3_k_m.gguf"
 
     echo "Downloading $HF_FILE from $HF_REPO ..."
-    echo "(This may take a while: ~4.7 GB)"
-    python -m huggingface_hub.commands.huggingface_cli download "$HF_REPO" "$HF_FILE" --local-dir llm/models
+    echo "(~3.3 GB, this will take a while)"
+    python -c "
+from huggingface_hub import hf_hub_download
+import sys
+path = hf_hub_download(repo_id='$HF_REPO', filename='$HF_FILE', local_dir='llm/models')
+print(path)
+"
 
     FOUND_GGUF=$(find llm/models -name "*.gguf" | head -1)
     if [ -n "$FOUND_GGUF" ]; then
         echo "Model ready: $(basename $FOUND_GGUF)"
     else
-        echo "WARNING: Model download may have failed. Place a .gguf file in llm/models/"
+        echo "WARNING: Model download failed. Place a .gguf file in llm/models/"
     fi
 fi
 
