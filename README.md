@@ -58,14 +58,14 @@ bash install.sh
 インストーラーが自動で行うこと:
 
 1. **Python** — 未インストールならwinget経由で自動インストール（Windows）
-2. **Git** — 未インストールならwinget経由で自動インストール（Windows）
-3. venv作成 + GPU検出に応じたPyTorchインストール
-4. BERT関連パッケージ（transformers, fugashi, unidic-lite等）
-5. NDLOCR-Lite（OCRエンジン、git clone + 依存インストール）
-6. llama-serverバイナリ（llama.cpp最新リリースから自動ダウンロード）
-7. LLMモデル（Qwen3.5-4B Q4_K_M、HuggingFaceから自動ダウンロード）
+2. venv作成 + GPU検出に応じたPyTorchインストール
+3. BERT関連パッケージ（transformers, fugashi, unidic-lite等）
+4. NDLOCR-Lite — Gitがあればclone、なければGitHubソースアーカイブを自動DL
+5. llama-serverバイナリ（llama.cpp最新リリースから自動ダウンロード）
+6. LLMモデル（Qwen3.5-4B Q4_K_M、HuggingFaceから自動ダウンロード）
+7. Gradio（WebUI用）
 
-Windowsの場合、PythonもGitも入っていない状態からインストーラーだけで全部揃う。
+Gitは入れておくとインストールが速い（cloneの方がソースアーカイブDLより効率的）。なくても動く。
 
 ## 使い方
 
