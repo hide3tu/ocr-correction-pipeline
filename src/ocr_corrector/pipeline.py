@@ -31,6 +31,19 @@ class PipelineResult:
     lines: list[str] = field(default_factory=list)
 
 
+def _resplit_by_punctuation(text: str) -> str:
+    """Join all lines and re-split by Japanese punctuation.
+
+    OCR output splits text at physical line boundaries, which breaks words
+    across lines (e.g. "空\\n気" for "空気"). Re-splitting by punctuation
+    (。、) eliminates these mid-word breaks.
+    """
+    import re
+    joined = text.replace("\n", "")
+    sentences = re.split(r"(?<=[。、])", joined)
+    return "\n".join(s for s in sentences if s.strip())
+
+
 def _filter_suspects(
     suspects: list[SuspectToken],
     min_prob: float = 0.30,
@@ -136,6 +149,8 @@ class Pipeline:
         if self._scanner is None:
             self.setup()
 
+        # Pre-process: re-split by punctuation to eliminate line-break artifacts
+        text = _resplit_by_punctuation(text)
         lines = text.splitlines()
         timing: dict[str, float] = {}
 
