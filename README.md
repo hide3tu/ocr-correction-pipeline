@@ -54,6 +54,12 @@ bash install.sh
 
 ## 使い方
 
+### WebUI（推奨）
+
+`start.bat`（Windows）または `start.sh`（Mac/Linux）をダブルクリック。ブラウザで http://localhost:7860 が開く。
+
+### コマンドライン
+
 ```bash
 # venv有効化
 .venv\Scripts\activate      # Windows
@@ -67,9 +73,6 @@ python -m ocr_corrector --text input.txt
 
 # BERT検出のみ（LLMなし、高速）
 python -m ocr_corrector --no-llm scan.jpg
-
-# WebUI起動（ブラウザで操作）
-python -m ocr_corrector --webui
 ```
 
 llama-serverは自動で起動・停止する。手動管理は不要。
