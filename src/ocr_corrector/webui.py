@@ -53,8 +53,9 @@ def _run_pipeline_streaming(
     gpu_mode: str,
     bert_threshold: float,
     escalation_threshold: float,
-) -> Generator[tuple[list[list[Any]], dict[str, Any], str], None, None]:
-    """Run pipeline, yielding (table, timing, status) at each stage."""
+):
+    """Run pipeline, yielding (table, timing, status, ocr_output) at each stage."""
+    import gradio as gr
 
     model_map = {
         "tohoku-bert-v3": "cl-tohoku/bert-base-japanese-v3",
@@ -62,26 +63,36 @@ def _run_pipeline_streaming(
     }
     bert_model_name = model_map.get(bert_model, bert_model)
 
+    # Button states
+    btn_busy = gr.update(value="処理中...", interactive=False)
+    btn_ready = gr.update(value="校正実行", interactive=True)
+
+    # Initially hide OCR output
+    ocr_hide = gr.update(value="", visible=False)
+    ocr_display = ocr_hide
+
     # Stage 0: OCR (if image)
     ocr_text = None
     if image is not None:
-        yield [], {}, "OCR処理中..."
+        yield [], "", "OCR処理中...", ocr_display, btn_busy
         try:
             from .ocr_frontend import ocr_image
             ocr_text = ocr_image(image)
             text = ocr_text
         except Exception as e:
-            yield [], {}, f"OCRエラー: {e}"
+            yield [], "", f"OCRエラー: {e}", ocr_display, btn_ready
             return
 
     if not text or not text.strip():
-        yield [], {}, "テキストが入力されていません"
+        yield [], "", "テキストが入力されていません", ocr_display, btn_ready
         return
 
+    # Show OCR text immediately when available
     if ocr_text:
-        yield [], {}, f"OCR完了: {len(ocr_text)}文字。BERTスキャン開始..."
+        ocr_display = gr.update(value=ocr_text, visible=True)
+        yield [], "", f"OCR完了: {len(ocr_text)}文字。BERTスキャン開始...", ocr_display, btn_busy
     else:
-        yield [], {}, "BERTスキャン開始..."
+        yield [], "", "BERTスキャン開始...", ocr_display, btn_busy
 
     config = PipelineConfig(
         bert_model=bert_model_name,
@@ -96,45 +107,51 @@ def _run_pipeline_streaming(
     pipeline = Pipeline(config)
     rows: list[list[Any]] = []
     lines: list[str] = []
-    timing_so_far: dict[str, Any] = {}
+    timing_str = ""
 
     try:
         for stage, data in pipeline.run_steps(text, ocr_text=ocr_text):
             if stage == "bert":
                 lines = data["lines"]
-                timing_so_far = {"bert_scan": f"{data['time']:.2f}s"}
+                timing_str = f"BERTスキャン: {data['time']:.1f}秒"
                 status = (
                     f"BERT完了: {data['raw']}箇所検出 → フィルタ後{data['filtered']}箇所 "
                     f"({data['time']:.1f}秒)"
                 )
                 if llm_enabled and data["filtered"] > 0:
                     status += f"。LLM判定開始 (0/{data['filtered']})..."
-                yield [], timing_so_far, status
+                yield [], timing_str, status, ocr_display, btn_busy
 
             elif stage == "llm":
                 i = data["index"]
                 total = data["total"]
                 result = data["result"]
                 rows.append(_format_row(result, lines))
-                yield list(rows), timing_so_far, f"LLM判定中: {i+1}/{total}..."
+                yield list(rows), timing_str, f"LLM判定中: {i+1}/{total}...", ocr_display, btn_busy
 
             elif stage == "done":
                 final = data
                 table_data = [_format_row(c, final.lines) for c in final.corrections]
-                timing = {k: f"{v:.2f}s" for k, v in final.timing.items()}
-                timing["total"] = f"{sum(final.timing.values()):.2f}s"
+                parts = []
+                for k, v in final.timing.items():
+                    label = {"bert_scan": "BERTスキャン", "llm_judge": "LLM判定"}.get(k, k)
+                    parts.append(f"{label}: {v:.1f}秒")
+                parts.append(f"合計: {sum(final.timing.values()):.1f}秒")
+                timing_str = " / ".join(parts)
+
+                n_fix = sum(1 for c in final.corrections if c.verdict == Verdict.AUTO_FIX)
+                n_esc = sum(1 for c in final.corrections if c.verdict == Verdict.ESCALATE)
+                n_keep = sum(1 for c in final.corrections if c.verdict == Verdict.AUTO_KEEP)
                 status = (
                     f"完了 | 検出: {final.raw_suspects}箇所 → "
                     f"フィルタ後: {final.filtered_suspects}箇所 | "
-                    f"AUTO-FIX: {sum(1 for c in final.corrections if c.verdict == Verdict.AUTO_FIX)} | "
-                    f"ESCALATE: {sum(1 for c in final.corrections if c.verdict == Verdict.ESCALATE)} | "
-                    f"AUTO-KEEP: {sum(1 for c in final.corrections if c.verdict == Verdict.AUTO_KEEP)}"
+                    f"AUTO-FIX: {n_fix} | ESCALATE: {n_esc} | AUTO-KEEP: {n_keep}"
                 )
-                yield table_data, timing, status
+                yield table_data, timing_str, status, ocr_display, btn_ready
 
     except Exception as e:
         logger.exception("Pipeline failed")
-        yield [], {}, f"パイプラインエラー: {e}"
+        yield [], "", f"パイプラインエラー: {e}", ocr_display, btn_ready
     finally:
         pipeline.cleanup()
 
@@ -204,6 +221,13 @@ def create_app():
                 run_btn = gr.Button("校正実行", variant="primary", size="lg")
                 status_text = gr.Textbox(label="ステータス", interactive=False)
 
+                ocr_output = gr.Textbox(
+                    label="OCR読取結果",
+                    lines=8,
+                    interactive=False,
+                    visible=False,
+                )
+
                 results_table = gr.Dataframe(
                     headers=["行", "元", "修正候補", "BERT確率", "LLM", "判定", "行テキスト"],
                     datatype=["number", "str", "str", "str", "str", "str", "str"],
@@ -211,7 +235,7 @@ def create_app():
                     wrap=True,
                 )
 
-                timing_json = gr.JSON(label="処理時間")
+                timing_text = gr.Textbox(label="処理時間", interactive=False)
 
         run_btn.click(
             fn=_run_pipeline_streaming,
@@ -220,7 +244,9 @@ def create_app():
                 bert_model, llm_model, llm_enabled, llm_api,
                 gpu_mode, bert_threshold, escalation_threshold,
             ],
-            outputs=[results_table, timing_json, status_text],
+            outputs=[results_table, timing_text, status_text, ocr_output, run_btn],
+            concurrency_limit=1,
+            trigger_mode="once",
         )
 
     return app
