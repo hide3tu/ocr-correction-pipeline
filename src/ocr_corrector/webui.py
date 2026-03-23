@@ -197,4 +197,10 @@ def create_app():
 def launch(share: bool = False, server_port: int = 7860):
     """Create and launch the Gradio app."""
     app = create_app()
-    app.launch(share=share, server_port=server_port, theme=gr.themes.Soft())
+    app.launch(
+        share=share,
+        server_port=server_port,
+        theme=gr.themes.Soft(),
+        show_api=False,
+        show_footer=False,
+    )
