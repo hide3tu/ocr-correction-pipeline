@@ -157,37 +157,31 @@ def _run_pipeline_streaming(
 
 
 REPO_URL = "https://github.com/hide3tu/ocr-correction-pipeline"
-REPO_API = "https://api.github.com/repos/hide3tu/ocr-correction-pipeline/commits/master"
 
 
 def _check_update() -> str:
     """Check if a newer version is available on GitHub. Returns banner markdown or empty."""
     import json
-    import subprocess
     from urllib.error import URLError
     from urllib.request import Request, urlopen
+    from . import __version__
 
     try:
-        local = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5,
-            cwd=str(Path(__file__).resolve().parent.parent.parent),
+        req = Request(
+            "https://api.github.com/repos/hide3tu/ocr-correction-pipeline/releases/latest",
+            method="GET",
         )
-        if local.returncode != 0:
-            return ""
-        local_sha = local.stdout.strip()
-
-        req = Request(REPO_API, method="GET")
         req.add_header("Accept", "application/vnd.github.v3+json")
         with urlopen(req, timeout=5) as resp:
-            remote_sha = json.loads(resp.read())["sha"]
+            data = json.loads(resp.read())
+            remote_ver = data.get("tag_name", "").lstrip("v")
 
-        if local_sha != remote_sha:
+        if remote_ver and remote_ver != __version__:
             return (
-                f"**更新があります** — `git pull` で最新版に更新してください。"
-                f" ([GitHub]({REPO_URL}))"
+                f"**新しいバージョン v{remote_ver} があります**（現在 v{__version__}）— "
+                f"[GitHub]({REPO_URL}/releases) からダウンロードしてください。"
             )
-    except (URLError, OSError, KeyError, subprocess.TimeoutExpired):
+    except (URLError, OSError, KeyError):
         pass
     return ""
 
