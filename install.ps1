@@ -46,24 +46,12 @@ if (-not $hasPython) {
     }
 }
 
-# Git check (needed for NDLOCR-Lite clone)
+# Git check (optional - used for NDLOCR-Lite clone, falls back to release download)
+$hasGit = $false
 try {
     $null = Get-Command git -ErrorAction Stop
-} catch {
-    Write-Host ""
-    Write-Host "Git not found. Installing..." -ForegroundColor Cyan
-    try {
-        & winget install Git.Git --accept-package-agreements --accept-source-agreements
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-        $null = Get-Command git -ErrorAction Stop
-        Write-Host "Git installed" -ForegroundColor Green
-    } catch {
-        Write-Host "Git auto-install failed." -ForegroundColor Red
-        Write-Host "Download from: https://git-scm.com/download/win" -ForegroundColor Cyan
-        Write-Host "After installing Git, run this script again."
-        exit 1
-    }
-}
+    $hasGit = $true
+} catch {}
 
 # Create venv
 if (Test-Path ".venv") {
@@ -116,10 +104,38 @@ Write-Host ""
 Write-Host "=== Setting up NDLOCR-Lite ===" -ForegroundColor Cyan
 $ndlocrDir = Join-Path $PWD "ndlocr-lite"
 if (Test-Path $ndlocrDir) {
-    Write-Host "ndlocr-lite already exists. Skipping clone."
-} else {
-    Write-Host "Cloning ndlocr-lite..."
+    Write-Host "ndlocr-lite already exists. Skipping."
+} elseif ($hasGit) {
+    Write-Host "Cloning ndlocr-lite (via git)..."
     & git clone https://github.com/ndl-lab/ndlocr-lite.git
+} else {
+    Write-Host "Git not found. Downloading ndlocr-lite source archive..."
+    # Release assets are GUI app bundles, not Python source.
+    # Use GitHub source archive instead (contains requirements.txt + src/).
+    try {
+        $ndlocrRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/ndl-lab/ndlocr-lite/releases/latest"
+        $ndlocrTag = $ndlocrRelease.tag_name
+        $ndlocrUrl = "https://github.com/ndl-lab/ndlocr-lite/archive/refs/tags/$ndlocrTag.zip"
+        $ndlocrZipPath = Join-Path $PWD "ndlocr-lite-src.zip"
+
+        Write-Host "Downloading ndlocr-lite source (v$ndlocrTag)..."
+        Invoke-WebRequest -Uri $ndlocrUrl -OutFile $ndlocrZipPath
+        Write-Host "Extracting..."
+        Expand-Archive -Path $ndlocrZipPath -DestinationPath $PWD -Force
+        Remove-Item $ndlocrZipPath -Force
+        # GitHub archives extract to ndlocr-lite-{tag}/
+        $extracted = Get-ChildItem -Path $PWD -Directory | Where-Object { $_.Name -like "ndlocr-lite-*" } | Select-Object -First 1
+        if ($extracted) {
+            Rename-Item -Path $extracted.FullName -NewName "ndlocr-lite"
+            Write-Host "ndlocr-lite ready (source v$ndlocrTag)" -ForegroundColor Green
+        } else {
+            Write-Host "WARNING: ndlocr-lite extraction failed." -ForegroundColor Yellow
+            Write-Host "Download manually from: https://github.com/ndl-lab/ndlocr-lite" -ForegroundColor Cyan
+        }
+    } catch {
+        Write-Host "WARNING: Failed to download ndlocr-lite source: $_" -ForegroundColor Yellow
+        Write-Host "Install git and re-run, or download manually." -ForegroundColor Yellow
+    }
 }
 Write-Host "Installing ndlocr-lite dependencies..."
 & pip install -r (Join-Path $ndlocrDir "requirements.txt")

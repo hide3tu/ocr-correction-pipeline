@@ -53,10 +53,32 @@ fi
 echo ""
 echo "=== Setting up NDLOCR-Lite ==="
 if [ -d "ndlocr-lite" ]; then
-    echo "ndlocr-lite already exists. Skipping clone."
-else
-    echo "Cloning ndlocr-lite..."
+    echo "ndlocr-lite already exists. Skipping."
+elif command -v git &>/dev/null; then
+    echo "Cloning ndlocr-lite (via git)..."
     git clone https://github.com/ndl-lab/ndlocr-lite.git
+else
+    echo "Git not found. Downloading ndlocr-lite source archive..."
+    # Release assets are GUI app bundles, not Python source.
+    # Use GitHub source archive instead (contains requirements.txt + src/).
+    NDLOCR_RELEASE=$(curl -sL "https://api.github.com/repos/ndl-lab/ndlocr-lite/releases/latest")
+    NDLOCR_TAG=$(echo "$NDLOCR_RELEASE" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")
+
+    NDLOCR_URL="https://github.com/ndl-lab/ndlocr-lite/archive/refs/tags/${NDLOCR_TAG}.tar.gz"
+    echo "Downloading ndlocr-lite source (v$NDLOCR_TAG)..."
+    curl -L -o "ndlocr-lite-src.tar.gz" "$NDLOCR_URL"
+    echo "Extracting..."
+    tar xzf "ndlocr-lite-src.tar.gz"
+    rm -f "ndlocr-lite-src.tar.gz"
+    # GitHub archives extract to ndlocr-lite-{tag}/
+    EXTRACTED=$(find . -maxdepth 1 -type d -name "ndlocr-lite-*" | head -1)
+    if [ -n "$EXTRACTED" ]; then
+        mv "$EXTRACTED" ndlocr-lite
+        echo "ndlocr-lite ready (source v$NDLOCR_TAG)"
+    else
+        echo "WARNING: ndlocr-lite extraction failed."
+        echo "Download manually from: https://github.com/ndl-lab/ndlocr-lite"
+    fi
 fi
 echo "Installing ndlocr-lite dependencies..."
 pip install -r ndlocr-lite/requirements.txt
