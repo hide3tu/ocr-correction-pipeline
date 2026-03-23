@@ -105,24 +105,16 @@ llama-serverは自動で起動・停止する。手動管理は不要。
 
 ## WebUI
 
-`python -m ocr_corrector --webui` で http://localhost:7860 にアクセス。
+`start.bat` / `start.sh` で http://localhost:7860 にWebUIが開く。
 
 - 画像またはテキストを入力して校正実行
 - 処理はOCR → BERT → LLMの順で段階的に進捗表示
 - 結果テーブルにAUTO-FIX（自動修正）/ ESCALATE（要確認）/ AUTO-KEEP（問題なし）を色分け表示
-
-Gradioはインストーラーで一緒に入る。
+- LLM API URLの欄でollama、LM Studio等のバックエンドにも切り替え可能
 
 ## LLMバックエンド
 
-デフォルトはllama-server（llama.cpp）。OpenAI互換APIなら何でも使える。
-
-```bash
-# 別のLLMバックエンドを使う場合
-python -m ocr_corrector --llm-api ollama scan.jpg
-python -m ocr_corrector --llm-api lm-studio scan.jpg
-python -m ocr_corrector --llm-api http://192.168.1.100:8080/v1 scan.jpg
-```
+デフォルトはllama-server（llama.cpp）。OpenAI互換APIなら何でも使える。WebUIのLLM API URL欄か、CLIの `--llm-api` オプションで切り替え。
 
 モデル差し替えは `llm/models/` にGGUFファイルを置くだけ。
 
@@ -139,6 +131,7 @@ python -m ocr_corrector --gpu-mode cpu-only scan.jpg    # 全部CPU
 
 ```
 ocr-correction-pipeline/
+├── start.bat / start.sh           # WebUI起動（ダブルクリック）
 ├── install.sh / install.ps1       # インストーラー
 ├── llm/                           # 自動配置（git管理外）
 │   ├── llama-server(.exe)
