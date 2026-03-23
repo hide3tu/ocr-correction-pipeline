@@ -31,7 +31,10 @@ Apple Silicon (M1/M2/M3/M4) は統合メモリなのでVRAM制約なし。
 
 PowerShell（Windows標準搭載）で実行。PowerShell 7は不要。
 
-PythonもGitも入っていなければインストーラーがwinget経由で自動インストールする。
+事前に以下を入れておくのを推奨（PATHを通す設定を忘れずに）。未インストールでもインストーラーがwinget経由で自動インストールを試みる。
+
+- [Python 3.12](https://www.python.org/downloads/) — インストール時に「Add python.exe to PATH」にチェック
+- [Git](https://git-scm.com/download/win)
 
 ```powershell
 # まだリポジトリを取得していない場合（Gitがあるなら）

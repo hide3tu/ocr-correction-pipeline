@@ -53,6 +53,7 @@ fi
 echo ""
 echo "Installing ocr-corrector..."
 pip install -e .
+pip install "gradio>=4.0"
 
 # Install NDLOCR-Lite (OCR frontend)
 echo ""

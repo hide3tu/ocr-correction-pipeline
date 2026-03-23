@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
 Write-Host "=== OCR Correction Pipeline Installer ===" -ForegroundColor Cyan
 Write-Host ""
@@ -109,6 +109,7 @@ if ($hasNvidia) {
 Write-Host ""
 Write-Host "Installing ocr-corrector..."
 & pip install -e .
+& pip install "gradio>=4.0"
 
 # Install NDLOCR-Lite (OCR frontend)
 Write-Host ""
