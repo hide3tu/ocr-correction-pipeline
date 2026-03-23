@@ -22,7 +22,7 @@ def detect_gpu() -> tuple[str, str | None, int | None]:
 
     if torch.cuda.is_available():
         name = torch.cuda.get_device_name(0)
-        vram = torch.cuda.get_device_properties(0).total_mem
+        vram = torch.cuda.get_device_properties(0).total_memory
         logger.info("CUDA detected: %s (VRAM: %.1f GB)", name, vram / 1e9)
         return "cuda", name, vram
 
