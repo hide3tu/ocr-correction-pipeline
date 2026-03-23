@@ -101,8 +101,8 @@ class Pipeline:
 
     def setup(self):
         """Initialize models based on config."""
-        self._bert_device, _ = resolve_device(self.config.gpu_mode)
-        logger.info("Device config: BERT=%s", self._bert_device)
+        self._bert_device, self._llm_ngl = resolve_device(self.config.gpu_mode)
+        logger.info("Device config: BERT=%s, LLM n_gpu_layers=%s", self._bert_device, self._llm_ngl)
 
         # Load BERT
         self._scanner = BertScanner(
@@ -125,7 +125,7 @@ class Pipeline:
                         server_bin=server_bin,
                         model_path=model_path,
                         port=8080,
-                        n_gpu_layers=0,  # CPU by default, safe for any env
+                        n_gpu_layers=int(self._llm_ngl),
                     )
                     api_base = self._server.start()
                 else:
