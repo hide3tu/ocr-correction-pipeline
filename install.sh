@@ -72,35 +72,25 @@ import transformers
 print(f'  transformers: {transformers.__version__}')
 "
 
-# Check ollama
+# LLM backend info
 echo ""
-if command -v ollama &>/dev/null; then
-    echo "ollama 検出: $(ollama --version 2>&1 || echo 'version unknown')"
-    echo ""
-    read -p "デフォルトモデル (qwen3.5:4b) をダウンロードしますか？ [y/N] " yn
-    if [[ "$yn" =~ ^[Yy] ]]; then
-        ollama pull qwen3.5:4b
-    fi
-else
-    echo "ollama が見つかりません。"
-    echo "Qwen判定を使う場合はインストールしてください:"
-    echo ""
-    if [[ "$OS_NAME" == "Darwin" ]]; then
-        echo "  brew install ollama"
-        echo "  または https://ollama.com/download"
-    else
-        echo "  curl -fsSL https://ollama.com/install.sh | sh"
-    fi
-    echo ""
-    echo "ollama なしでも --no-qwen オプションでBERTのみモードが使えます。"
-fi
+echo "=== LLM Backend ==="
+echo "LLM判定にはOpenAI互換APIサーバーが必要です。"
+echo "推奨: llama-server (llama.cpp)"
+echo "  https://github.com/ggerganov/llama.cpp/releases"
+echo ""
+echo "起動例:"
+echo "  llama-server -m model.gguf --port 8080 --n-gpu-layers 99"
+echo ""
+echo "他の互換サーバー: ollama, LM Studio, vLLM 等も使用可"
+echo "LLMなしでも --no-llm でBERTのみモードが使えます。"
 
 echo ""
 echo "=== インストール完了 ==="
 echo ""
 echo "使い方:"
 echo "  source .venv/bin/activate"
-echo "  python -m ocr_corrector input.txt           # テキストファイルを校正"
-echo "  python -m ocr_corrector --no-qwen input.txt # BERTのみモード"
-echo "  python -m ocr_corrector --webui              # WebUI起動"
-echo "  python -m ocr_corrector --help               # ヘルプ"
+echo "  python -m ocr_corrector input.txt          # llama-server :8080で校正"
+echo "  python -m ocr_corrector --no-llm input.txt # BERTのみモード"
+echo "  python -m ocr_corrector --llm-api ollama input.txt  # ollamaを使う場合"
+echo "  python -m ocr_corrector --help              # ヘルプ"

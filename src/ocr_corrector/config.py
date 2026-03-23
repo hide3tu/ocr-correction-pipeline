@@ -14,7 +14,7 @@ class PipelineConfig:
     # LLM settings (any OpenAI-compatible endpoint)
     llm_model: str = "qwen3.5:4b"
     llm_enabled: bool = True
-    llm_api_base: str = "http://localhost:11434/v1"  # ollama default
+    llm_api_base: str = "http://localhost:8080/v1"  # llama-server default
 
     # Escalation settings
     escalation_threshold: float = 0.50  # BERT confidence above this -> ESCALATE when Qwen says KEEP

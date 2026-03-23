@@ -88,11 +88,11 @@ def main():
     )
     parser.add_argument(
         "--llm-api",
-        default="http://localhost:11434/v1",
+        default="http://localhost:8080/v1",
         help=(
             "OpenAI-compatible API base URL. "
             "Shortcuts: ollama, llama-server, lm-studio. "
-            "(default: http://localhost:11434/v1)"
+            "(default: http://localhost:8080/v1 = llama-server)"
         ),
     )
     parser.add_argument(

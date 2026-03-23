@@ -88,31 +88,25 @@ Set-Content -Path $tempFile -Value $verifyCode -Encoding UTF8
 & python $tempFile
 Remove-Item $tempFile
 
-# Check ollama
+# LLM backend info
 Write-Host ""
-$hasOllama = Get-Command ollama -ErrorAction SilentlyContinue
-if ($hasOllama) {
-    $ollamaVer = & ollama --version 2>&1
-    Write-Host "ollama detected: $ollamaVer"
-    Write-Host ""
-    $yn = Read-Host "Download default model (qwen3.5:4b)? [y/N]"
-    if ($yn -match "^[Yy]") {
-        & ollama pull qwen3.5:4b
-    }
-} else {
-    Write-Host "ollama not found." -ForegroundColor Yellow
-    Write-Host "Install ollama for Qwen judgment:"
-    Write-Host "  https://ollama.com/download" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "Without ollama, use --no-qwen for BERT-only mode."
-}
+Write-Host "=== LLM Backend ===" -ForegroundColor Cyan
+Write-Host "LLM judgment requires an OpenAI-compatible API server."
+Write-Host "Recommended: llama-server (llama.cpp)" -ForegroundColor Green
+Write-Host "  https://github.com/ggerganov/llama.cpp/releases"
+Write-Host ""
+Write-Host "Start llama-server with a GGUF model:"
+Write-Host "  llama-server -m model.gguf --port 8080 --n-gpu-layers 99"
+Write-Host ""
+Write-Host "Other compatible servers: ollama, LM Studio, vLLM, etc."
+Write-Host "Without LLM, use --no-llm for BERT-only mode."
 
 Write-Host ""
 Write-Host "=== Installation Complete ===" -ForegroundColor Green
 Write-Host ""
 Write-Host "Usage:"
 Write-Host "  .\.venv\Scripts\Activate.ps1"
-Write-Host "  python -m ocr_corrector input.txt           # Correct text file"
-Write-Host "  python -m ocr_corrector --no-qwen input.txt # BERT-only mode"
-Write-Host "  python -m ocr_corrector --webui              # Launch WebUI"
-Write-Host "  python -m ocr_corrector --help               # Help"
+Write-Host "  python -m ocr_corrector input.txt          # With llama-server on :8080"
+Write-Host "  python -m ocr_corrector --no-llm input.txt # BERT-only mode"
+Write-Host "  python -m ocr_corrector --llm-api ollama input.txt  # Use ollama"
+Write-Host "  python -m ocr_corrector --help              # Help"
