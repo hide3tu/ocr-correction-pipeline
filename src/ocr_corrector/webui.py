@@ -3,51 +3,48 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from .config import PipelineConfig
 from .escalation import Verdict
+from .llm_server import DEFAULT_MODEL_DIR
 from .pipeline import Pipeline
+from .qwen_judge import KNOWN_ENDPOINTS
 
 logger = logging.getLogger(__name__)
 
 
-def _verdict_color(verdict: Verdict) -> str:
-    return {
-        Verdict.AUTO_FIX: "#4caf50",
-        Verdict.ESCALATE: "#ff9800",
-        Verdict.AUTO_KEEP: "#9e9e9e",
-    }.get(verdict, "#9e9e9e")
+def _find_gguf_models() -> list[str]:
+    """Scan llm/models/ for available GGUF files."""
+    if not DEFAULT_MODEL_DIR.exists():
+        return []
+    return [f.name for f in sorted(DEFAULT_MODEL_DIR.glob("*.gguf"))]
 
 
-def _verdict_label(verdict: Verdict) -> str:
-    return {
-        Verdict.AUTO_FIX: "AUTO-FIX (自動修正)",
-        Verdict.ESCALATE: "ESCALATE (要確認)",
-        Verdict.AUTO_KEEP: "AUTO-KEEP (問題なし)",
-    }.get(verdict, str(verdict))
+def _resolve_api_base(value: str) -> str:
+    return KNOWN_ENDPOINTS.get(value, value)
 
 
 def _run_pipeline(
     text: str,
     image,
     bert_model: str,
-    qwen_model: str,
-    qwen_enabled: bool,
+    llm_model: str,
+    llm_enabled: bool,
+    llm_api: str,
     gpu_mode: str,
     bert_threshold: float,
     escalation_threshold: float,
 ) -> tuple[list[list[Any]], dict[str, Any], str]:
     """Run the pipeline and return (table_data, timing_dict, status_message)."""
 
-    # Resolve BERT model name
     model_map = {
         "tohoku-bert-v3": "cl-tohoku/bert-base-japanese-v3",
         "luke-japanese-base-lite": "studio-ousia/luke-japanese-base-lite",
     }
     bert_model_name = model_map.get(bert_model, bert_model)
 
-    # Handle image input
     if image is not None:
         try:
             from .ocr_frontend import ocr_image
@@ -62,8 +59,9 @@ def _run_pipeline(
 
     config = PipelineConfig(
         bert_model=bert_model_name,
-        qwen_model=qwen_model,
-        qwen_enabled=qwen_enabled,
+        llm_model=llm_model,
+        llm_enabled=llm_enabled,
+        llm_api_base=_resolve_api_base(llm_api),
         gpu_mode=gpu_mode,
         bert_threshold=bert_threshold,
         escalation_threshold=escalation_threshold,
@@ -78,7 +76,6 @@ def _run_pipeline(
     finally:
         pipeline.cleanup()
 
-    # Build table rows
     table_data = []
     for c in result.corrections:
         line_text = ""
@@ -97,7 +94,6 @@ def _run_pipeline(
             line_text,
         ])
 
-    # Timing info
     timing = {k: f"{v:.2f}s" for k, v in result.timing.items()}
     timing["total"] = f"{sum(result.timing.values()):.2f}s"
 
@@ -115,14 +111,13 @@ def create_app():
     """Create the Gradio app."""
     import gradio as gr
 
-    with gr.Blocks(
-        title="OCR校正パイプライン",
-        theme=gr.themes.Soft(),
-    ) as app:
-        gr.Markdown("# OCR校正パイプライン\nBERT perplexityスキャン + Qwen LLM判定")
+    gguf_models = _find_gguf_models()
+    default_model = gguf_models[0] if gguf_models else "Qwen3.5-4B-Q4_K_M.gguf"
+
+    with gr.Blocks(title="OCR校正パイプライン") as app:
+        gr.Markdown("# OCR校正パイプライン\nBERT perplexityスキャン + LLM判定（llama-server / ollama）")
 
         with gr.Row():
-            # Left panel: settings
             with gr.Column(scale=1, min_width=280):
                 gr.Markdown("### 設定")
 
@@ -131,14 +126,20 @@ def create_app():
                     value="tohoku-bert-v3",
                     label="BERTモデル",
                 )
-                qwen_model = gr.Dropdown(
-                    choices=["qwen3.5:4b", "qwen3.5:9b", "qwen2.5:7b"],
-                    value="qwen3.5:4b",
-                    label="Qwenモデル",
+                llm_model = gr.Dropdown(
+                    choices=gguf_models or [default_model],
+                    value=default_model,
+                    label="LLMモデル (llm/models/ 内のGGUF)",
+                    allow_custom_value=True,
                 )
-                qwen_enabled = gr.Checkbox(value=True, label="Qwen判定を使用")
+                llm_enabled = gr.Checkbox(value=True, label="LLM判定を使用")
+                llm_api = gr.Textbox(
+                    value="http://localhost:8080/v1",
+                    label="LLM API URL",
+                    info="llama-server, ollama, lm-studio も可",
+                )
                 gpu_mode = gr.Dropdown(
-                    choices=["auto", "both-gpu", "bert-only", "qwen-only", "cpu-only"],
+                    choices=["auto", "both-gpu", "bert-only", "cpu-only"],
                     value="auto",
                     label="GPU配置",
                 )
@@ -150,10 +151,9 @@ def create_app():
                 escalation_threshold = gr.Slider(
                     minimum=0.1, maximum=0.9, value=0.50, step=0.05,
                     label="エスカレーション閾値",
-                    info="QwenがKEEPでもBERT確信度がこれ以上なら人間に差し戻し",
+                    info="LLMがKEEPでもBERT確信度がこれ以上なら人間に差し戻し",
                 )
 
-            # Main area
             with gr.Column(scale=3):
                 with gr.Tabs():
                     with gr.TabItem("テキスト入力"):
@@ -167,15 +167,13 @@ def create_app():
                             type="filepath",
                             label="画像ファイル",
                         )
-                        gr.Markdown(
-                            "*画像入力にはndlocr-liteのインストールが必要です*"
-                        )
+                        gr.Markdown("*画像入力にはndlocr-liteのインストールが必要です*")
 
                 run_btn = gr.Button("校正実行", variant="primary", size="lg")
                 status_text = gr.Textbox(label="ステータス", interactive=False)
 
                 results_table = gr.Dataframe(
-                    headers=["行", "元", "修正候補", "BERT確率", "Qwen", "判定", "行テキスト"],
+                    headers=["行", "元", "修正候補", "BERT確率", "LLM", "判定", "行テキスト"],
                     datatype=["number", "str", "str", "str", "str", "str", "str"],
                     label="校正結果",
                     wrap=True,
@@ -183,12 +181,11 @@ def create_app():
 
                 timing_json = gr.JSON(label="処理時間")
 
-        # Event handler
         run_btn.click(
             fn=_run_pipeline,
             inputs=[
                 text_input, image_input,
-                bert_model, qwen_model, qwen_enabled,
+                bert_model, llm_model, llm_enabled, llm_api,
                 gpu_mode, bert_threshold, escalation_threshold,
             ],
             outputs=[results_table, timing_json, status_text],
@@ -200,4 +197,4 @@ def create_app():
 def launch(share: bool = False, server_port: int = 7860):
     """Create and launch the Gradio app."""
     app = create_app()
-    app.launch(share=share, server_port=server_port)
+    app.launch(share=share, server_port=server_port, theme=gr.themes.Soft())
