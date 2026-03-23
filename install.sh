@@ -49,12 +49,8 @@ else
     pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 fi
 
-# Install package
-echo ""
-echo "Installing ocr-corrector..."
-pip install -e .
-
-# Install NDLOCR-Lite (OCR frontend)
+# Install NDLOCR-Lite (OCR frontend) — install first to avoid pinned deps
+# downgrading ocr-corrector's dependencies
 echo ""
 echo "=== Setting up NDLOCR-Lite ==="
 if [ -d "ndlocr-lite" ]; then
@@ -65,6 +61,11 @@ else
 fi
 echo "Installing ndlocr-lite dependencies..."
 pip install -r ndlocr-lite/requirements.txt
+
+# Install package (after ndlocr-lite so our deps take precedence)
+echo ""
+echo "Installing ocr-corrector..."
+pip install -e .
 
 # Verify
 echo ""
@@ -95,14 +96,15 @@ else
     TAG=$(echo "$RELEASE_JSON" | python -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")
 
     # Determine asset pattern
+    # Asset naming: llama-{tag}-bin-{platform}.{ext}
     if [[ "$OS_NAME" == "Darwin" ]] && [[ "$ARCH" == "arm64" ]]; then
-        PATTERN="macos-arm64.zip"
+        PATTERN="bin-macos-arm64\.tar\.gz"
     elif [[ "$OS_NAME" == "Darwin" ]]; then
-        PATTERN="macos-x64.zip"
+        PATTERN="bin-macos-x64\.tar\.gz"
     elif command -v nvidia-smi &>/dev/null; then
-        PATTERN="linux-x64-cuda.*\.tar\.gz"
+        PATTERN="bin-ubuntu-x64\.tar\.gz"
     else
-        PATTERN="linux-x64\.tar\.gz"
+        PATTERN="bin-ubuntu-x64\.tar\.gz"
     fi
 
     ASSET_URL=$(echo "$RELEASE_JSON" | python -c "
@@ -129,15 +131,20 @@ for a in data['assets']:
         else
             tar xzf "$FILENAME"
         fi
+        rm -f "$FILENAME"
 
-        # Find and move llama-server
+        # Find llama-server in extracted directory and symlink it
+        # Must stay in the extracted dir so shared libraries (dylibs/so) are found
         FOUND=$(find . -name "llama-server" -type f | head -1)
-        if [ -n "$FOUND" ] && [ "$FOUND" != "./llama-server" ]; then
-            mv "$FOUND" ./llama-server
-            chmod +x ./llama-server
+        if [ -n "$FOUND" ]; then
+            chmod +x "$FOUND"
+            # Create symlink at llm/llama-server pointing into the extracted dir
+            ln -sf "$FOUND" ./llama-server
+            echo "llama-server ready ($(readlink ./llama-server))"
+        else
+            echo "WARNING: llama-server binary not found in extracted archive"
         fi
 
-        rm -f "$FILENAME"
         cd ..
         echo "llama-server ready"
     fi
