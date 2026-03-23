@@ -74,8 +74,11 @@ def main():
         prog="ocr-corrector",
         description="BERT + LLM OCR correction pipeline",
     )
-    parser.add_argument("input", nargs="?", help="Input text file (or - for stdin)")
-    parser.add_argument("--image", help="Input image file (requires ndlocr-lite)")
+    parser.add_argument("input", nargs="?", help="Input image or text file")
+    parser.add_argument(
+        "--text", action="store_true",
+        help="Treat input as text file instead of image",
+    )
     parser.add_argument(
         "--bert-model",
         default="cl-tohoku/bert-base-japanese-v3",
@@ -83,8 +86,8 @@ def main():
     )
     parser.add_argument(
         "--llm-model",
-        default="qwen3.5:4b",
-        help="LLM model name (default: qwen3.5:4b)",
+        default="Qwen3.5-4B-Q4_K_M.gguf",
+        help="LLM model name (default: Qwen3.5-4B-Q4_K_M.gguf)",
     )
     parser.add_argument(
         "--llm-api",
@@ -148,16 +151,28 @@ def main():
 
     # Get input text
     text = None
-    if args.image:
-        from .ocr_frontend import ocr_image
-        print(f"Running OCR on {args.image}...")
-        text = ocr_image(args.image)
-        print(f"OCR complete: {len(text)} chars")
-    elif args.input and args.input != "-":
+    if not args.input and not sys.stdin.isatty():
+        # stdin
+        text = sys.stdin.read()
+    elif args.input == "-":
+        text = sys.stdin.read()
+    elif args.input and args.text:
+        # Explicit text mode
         with open(args.input, encoding="utf-8") as f:
             text = f.read()
-    elif args.input == "-" or not sys.stdin.isatty():
-        text = sys.stdin.read()
+    elif args.input:
+        # Default: image input via NDLOCR-Lite
+        ext = args.input.rsplit(".", 1)[-1].lower() if "." in args.input else ""
+        if ext in ("txt", "text", "csv"):
+            # Text file detected
+            with open(args.input, encoding="utf-8") as f:
+                text = f.read()
+        else:
+            # Image file -> OCR
+            from .ocr_frontend import ocr_image
+            print(f"Running OCR on {args.input}...")
+            text = ocr_image(args.input)
+            print(f"OCR complete: {len(text)} chars")
     else:
         parser.print_help()
         sys.exit(1)

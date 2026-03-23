@@ -155,11 +155,11 @@ $existingGguf = Get-ChildItem -Path $modelsDir -Filter "*.gguf" -ErrorAction Sil
 if ($existingGguf) {
     Write-Host "GGUF model already exists: $($existingGguf.Name). Skipping download."
 } else {
-    $hfRepo = "Qwen/Qwen2.5-7B-Instruct-GGUF"
-    $hfFile = "qwen2.5-7b-instruct-q3_k_m.gguf"
+    $hfRepo = "unsloth/Qwen3.5-4B-GGUF"
+    $hfFile = "Qwen3.5-4B-Q4_K_M.gguf"
 
     Write-Host "Downloading $hfFile from $hfRepo ..."
-    Write-Host "(~3.3 GB, this will take a while)"
+    Write-Host "(~2.7 GB, this will take a while)"
 
     $dlCode = @'
 from huggingface_hub import hf_hub_download
