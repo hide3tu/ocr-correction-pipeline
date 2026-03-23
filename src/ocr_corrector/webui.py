@@ -230,13 +230,9 @@ def launch(share: bool = False, server_port: int = 7860):
     """Create and launch the Gradio app."""
     import gradio as gr
     app = create_app()
-    launch_kwargs = dict(
+    app.launch(
         share=share,
         server_port=server_port,
         theme=gr.themes.Soft(),
+        footer_links=[],
     )
-    # Gradio 5.x supports show_api/show_footer, 6.x removed them
-    try:
-        app.launch(show_api=False, show_footer=False, **launch_kwargs)
-    except TypeError:
-        app.launch(**launch_kwargs)
