@@ -156,15 +156,54 @@ def _run_pipeline_streaming(
         pipeline.cleanup()
 
 
+REPO_URL = "https://github.com/hide3tu/ocr-correction-pipeline"
+REPO_API = "https://api.github.com/repos/hide3tu/ocr-correction-pipeline/commits/master"
+
+
+def _check_update() -> str:
+    """Check if a newer version is available on GitHub. Returns banner markdown or empty."""
+    import json
+    import subprocess
+    from urllib.error import URLError
+    from urllib.request import Request, urlopen
+
+    try:
+        local = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+            cwd=str(Path(__file__).resolve().parent.parent.parent),
+        )
+        if local.returncode != 0:
+            return ""
+        local_sha = local.stdout.strip()
+
+        req = Request(REPO_API, method="GET")
+        req.add_header("Accept", "application/vnd.github.v3+json")
+        with urlopen(req, timeout=5) as resp:
+            remote_sha = json.loads(resp.read())["sha"]
+
+        if local_sha != remote_sha:
+            return (
+                f"**更新があります** — `git pull` で最新版に更新してください。"
+                f" ([GitHub]({REPO_URL}))"
+            )
+    except (URLError, OSError, KeyError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
 def create_app():
     """Create the Gradio app."""
     import gradio as gr
 
     gguf_models = _find_gguf_models()
     default_model = gguf_models[0] if gguf_models else "Qwen3.5-4B-Q4_K_M.gguf"
+    update_banner = _check_update()
 
     with gr.Blocks(title="OCR校正パイプライン") as app:
         gr.Markdown("# OCR校正パイプライン\nBERT perplexityスキャン + LLM判定（llama-server / ollama）")
+        if update_banner:
+            gr.Markdown(f"> {update_banner}")
 
         with gr.Row():
             with gr.Column(scale=1, min_width=280):
