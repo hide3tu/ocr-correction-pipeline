@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 from .config import PipelineConfig
 from .escalation import Verdict
@@ -26,7 +26,24 @@ def _resolve_api_base(value: str) -> str:
     return KNOWN_ENDPOINTS.get(value, value)
 
 
-def _run_pipeline(
+def _format_row(c, lines: list[str]) -> list[Any]:
+    line_text = ""
+    if c.suspect.line_index < len(lines):
+        line_text = lines[c.suspect.line_index].strip()
+        if len(line_text) > 60:
+            line_text = line_text[:60] + "..."
+    return [
+        c.suspect.line_index,
+        c.suspect.original,
+        c.suggested_fix,
+        f"{c.suggested_prob:.0%}",
+        c.qwen_verdict or "-",
+        c.verdict.value,
+        line_text,
+    ]
+
+
+def _run_pipeline_streaming(
     text: str,
     image,
     bert_model: str,
@@ -36,8 +53,8 @@ def _run_pipeline(
     gpu_mode: str,
     bert_threshold: float,
     escalation_threshold: float,
-) -> tuple[list[list[Any]], dict[str, Any], str]:
-    """Run the pipeline and return (table_data, timing_dict, status_message)."""
+) -> Generator[tuple[list[list[Any]], dict[str, Any], str], None, None]:
+    """Run pipeline, yielding (table, timing, status) at each stage."""
 
     model_map = {
         "tohoku-bert-v3": "cl-tohoku/bert-base-japanese-v3",
@@ -45,17 +62,26 @@ def _run_pipeline(
     }
     bert_model_name = model_map.get(bert_model, bert_model)
 
+    # Stage 0: OCR (if image)
+    ocr_text = None
     if image is not None:
+        yield [], {}, "OCR処理中..."
         try:
             from .ocr_frontend import ocr_image
-            text = ocr_image(image)
-        except ImportError:
-            return [], {}, "ndlocr-lite がインストールされていません"
+            ocr_text = ocr_image(image)
+            text = ocr_text
         except Exception as e:
-            return [], {}, f"OCRエラー: {e}"
+            yield [], {}, f"OCRエラー: {e}"
+            return
 
     if not text or not text.strip():
-        return [], {}, "テキストが入力されていません"
+        yield [], {}, "テキストが入力されていません"
+        return
+
+    if ocr_text:
+        yield [], {}, f"OCR完了: {len(ocr_text)}文字。BERTスキャン開始..."
+    else:
+        yield [], {}, "BERTスキャン開始..."
 
     config = PipelineConfig(
         bert_model=bert_model_name,
@@ -68,43 +94,49 @@ def _run_pipeline(
     )
 
     pipeline = Pipeline(config)
+    rows: list[list[Any]] = []
+    lines: list[str] = []
+    timing_so_far: dict[str, Any] = {}
+
     try:
-        result = pipeline.run(text)
+        for stage, data in pipeline.run_steps(text, ocr_text=ocr_text):
+            if stage == "bert":
+                lines = data["lines"]
+                timing_so_far = {"bert_scan": f"{data['time']:.2f}s"}
+                status = (
+                    f"BERT完了: {data['raw']}箇所検出 → フィルタ後{data['filtered']}箇所 "
+                    f"({data['time']:.1f}秒)"
+                )
+                if llm_enabled and data["filtered"] > 0:
+                    status += f"。LLM判定開始 (0/{data['filtered']})..."
+                yield [], timing_so_far, status
+
+            elif stage == "llm":
+                i = data["index"]
+                total = data["total"]
+                result = data["result"]
+                rows.append(_format_row(result, lines))
+                yield list(rows), timing_so_far, f"LLM判定中: {i+1}/{total}..."
+
+            elif stage == "done":
+                final = data
+                table_data = [_format_row(c, final.lines) for c in final.corrections]
+                timing = {k: f"{v:.2f}s" for k, v in final.timing.items()}
+                timing["total"] = f"{sum(final.timing.values()):.2f}s"
+                status = (
+                    f"完了 | 検出: {final.raw_suspects}箇所 → "
+                    f"フィルタ後: {final.filtered_suspects}箇所 | "
+                    f"AUTO-FIX: {sum(1 for c in final.corrections if c.verdict == Verdict.AUTO_FIX)} | "
+                    f"ESCALATE: {sum(1 for c in final.corrections if c.verdict == Verdict.ESCALATE)} | "
+                    f"AUTO-KEEP: {sum(1 for c in final.corrections if c.verdict == Verdict.AUTO_KEEP)}"
+                )
+                yield table_data, timing, status
+
     except Exception as e:
         logger.exception("Pipeline failed")
-        return [], {}, f"パイプラインエラー: {e}"
+        yield [], {}, f"パイプラインエラー: {e}"
     finally:
         pipeline.cleanup()
-
-    table_data = []
-    for c in result.corrections:
-        line_text = ""
-        if c.suspect.line_index < len(result.lines):
-            line_text = result.lines[c.suspect.line_index].strip()
-            if len(line_text) > 60:
-                line_text = line_text[:60] + "..."
-
-        table_data.append([
-            c.suspect.line_index,
-            c.suspect.original,
-            c.suggested_fix,
-            f"{c.suggested_prob:.0%}",
-            c.qwen_verdict or "-",
-            c.verdict.value,
-            line_text,
-        ])
-
-    timing = {k: f"{v:.2f}s" for k, v in result.timing.items()}
-    timing["total"] = f"{sum(result.timing.values()):.2f}s"
-
-    status = (
-        f"検出: {result.raw_suspects}箇所 → フィルタ後: {result.filtered_suspects}箇所 | "
-        f"AUTO-FIX: {sum(1 for c in result.corrections if c.verdict == Verdict.AUTO_FIX)} | "
-        f"ESCALATE: {sum(1 for c in result.corrections if c.verdict == Verdict.ESCALATE)} | "
-        f"AUTO-KEEP: {sum(1 for c in result.corrections if c.verdict == Verdict.AUTO_KEEP)}"
-    )
-
-    return table_data, timing, status
 
 
 def create_app():
@@ -182,7 +214,7 @@ def create_app():
                 timing_json = gr.JSON(label="処理時間")
 
         run_btn.click(
-            fn=_run_pipeline,
+            fn=_run_pipeline_streaming,
             inputs=[
                 text_input, image_input,
                 bert_model, llm_model, llm_enabled, llm_api,
@@ -196,11 +228,15 @@ def create_app():
 
 def launch(share: bool = False, server_port: int = 7860):
     """Create and launch the Gradio app."""
+    import gradio as gr
     app = create_app()
-    app.launch(
+    launch_kwargs = dict(
         share=share,
         server_port=server_port,
         theme=gr.themes.Soft(),
-        show_api=False,
-        show_footer=False,
     )
+    # Gradio 5.x supports show_api/show_footer, 6.x removed them
+    try:
+        app.launch(show_api=False, show_footer=False, **launch_kwargs)
+    except TypeError:
+        app.launch(**launch_kwargs)

@@ -207,6 +207,80 @@ class Pipeline:
             lines=lines,
         )
 
+    def run_steps(self, text: str, ocr_text: str | None = None):
+        """Run pipeline yielding intermediate results at each stage.
+
+        Yields (stage, data) tuples:
+          ("ocr", ocr_text)
+          ("bert", {"raw": N, "filtered": N, "suspects": [...], "lines": [...], "time": F})
+          ("llm", {"index": i, "total": N, "result": CorrectionResult})
+          ("done", PipelineResult)
+        """
+        if self._scanner is None:
+            self.setup()
+
+        # If ocr_text was passed (from image input), use it
+        if ocr_text:
+            text = ocr_text
+
+        text = _resplit_by_punctuation(text)
+        lines = text.splitlines()
+        timing: dict[str, float] = {}
+
+        # Step 1: BERT scan
+        t0 = time.perf_counter()
+        raw_suspects = self._scanner.scan(text)
+        timing["bert_scan"] = time.perf_counter() - t0
+
+        filtered = _filter_suspects(
+            raw_suspects,
+            min_prob=self.config.min_candidate_prob,
+            skip_subword=self.config.skip_subword,
+        )
+
+        yield "bert", {
+            "raw": len(raw_suspects),
+            "filtered": len(filtered),
+            "suspects": filtered,
+            "lines": lines,
+            "time": timing["bert_scan"],
+        }
+
+        # Step 2: LLM judgment (one by one)
+        corrections: list[CorrectionResult] = []
+        t0 = time.perf_counter()
+
+        for i, suspect in enumerate(filtered):
+            if self.config.llm_enabled and self._judge is not None:
+                line = lines[suspect.line_index] if suspect.line_index < len(lines) else ""
+                top_fix = suspect.candidates[0][0] if suspect.candidates else ""
+                fixed_line = _build_fixed_line(line, suspect, top_fix)
+                context = _get_context(lines, suspect.line_index)
+
+                qwen_verdict = self._judge.judge(line, fixed_line, context)
+                result = classify_with_qwen(
+                    suspect, qwen_verdict,
+                    escalation_threshold=self.config.escalation_threshold,
+                )
+            else:
+                result = classify_without_qwen(
+                    suspect,
+                    autofix_threshold=self.config.autofix_threshold,
+                    escalation_threshold=self.config.min_candidate_prob,
+                )
+            corrections.append(result)
+            yield "llm", {"index": i, "total": len(filtered), "result": result}
+
+        timing["llm_judge"] = time.perf_counter() - t0
+
+        yield "done", PipelineResult(
+            corrections=corrections,
+            raw_suspects=len(raw_suspects),
+            filtered_suspects=len(filtered),
+            timing=timing,
+            lines=lines,
+        )
+
     def cleanup(self):
         """Release resources."""
         if self._scanner:
