@@ -31,23 +31,34 @@ Apple Silicon (M1/M2/M3/M4) は統合メモリなのでVRAM制約なし。
 
 PowerShell（Windows標準搭載）で実行。PowerShell 7は不要。
 
-事前に以下を入れておくのを推奨（PATHを通す設定を忘れずに）。未インストールでもインストーラーがwinget経由で自動インストールを試みる。
+事前に [Python 3.12](https://www.python.org/downloads/) を入れておくのを推奨（インストール時に「Add python.exe to PATH」にチェック）。未インストールでもインストーラーがwinget経由で自動インストールを試みる。Gitはあると速いがなくても動く。
 
-- [Python 3.12](https://www.python.org/downloads/) — インストール時に「Add python.exe to PATH」にチェック
-- [Git](https://git-scm.com/download/win)
+**方法A: リリースページからZIPダウンロード（Git不要）**
+
+1. [Releases](https://github.com/hide3tu/ocr-correction-pipeline/releases) から最新版の「Source code (zip)」をダウンロード
+2. ZIPを展開してフォルダに入る
+3. `install.ps1` を右クリック →「PowerShellで実行」、または以下を実行:
 
 ```powershell
-# まだリポジトリを取得していない場合（Gitがあるなら）
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+**方法B: git clone（Gitがある場合）**
+
+```powershell
 git clone https://github.com/hide3tu/ocr-correction-pipeline.git
 cd ocr-correction-pipeline
-
-# GitがなければGitHubからZIPダウンロード→展開でもOK
-
-# インストール
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
 ### Mac / Linux
+
+**方法A: リリースページからダウンロード（Git不要）**
+
+1. [Releases](https://github.com/hide3tu/ocr-correction-pipeline/releases) から最新版の「Source code (tar.gz)」をダウンロード
+2. 展開してフォルダに入り `bash install.sh`
+
+**方法B: git clone**
 
 ```bash
 git clone https://github.com/hide3tu/ocr-correction-pipeline.git
