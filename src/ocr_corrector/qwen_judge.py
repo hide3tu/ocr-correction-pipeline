@@ -1,11 +1,18 @@
-"""Qwen LLM judgment for OCR correction candidates."""
+"""LLM judgment for OCR correction candidates.
+
+Supports any OpenAI-compatible API endpoint:
+- ollama (default, http://localhost:11434/v1)
+- llama-server (http://localhost:8080/v1)
+- LM Studio (http://localhost:1234/v1)
+- Any other OpenAI-compatible server
+"""
 
 from __future__ import annotations
 
+import json
 import logging
-import os
-
-import ollama
+from urllib.request import Request, urlopen
+from urllib.error import URLError
 
 logger = logging.getLogger(__name__)
 
@@ -18,25 +25,50 @@ AかBのみで答えてください。
 A: {line_a}
 B: {line_b}"""
 
+# Well-known endpoints
+KNOWN_ENDPOINTS = {
+    "ollama": "http://localhost:11434/v1",
+    "llama-server": "http://localhost:8080/v1",
+    "lm-studio": "http://localhost:1234/v1",
+}
 
-class QwenJudge:
-    """Use Qwen via ollama to judge FIX/KEEP for each suspect."""
 
-    def __init__(self, model: str = "qwen3.5:4b", ollama_num_gpu: str = "99"):
+class LlmJudge:
+    """Use any OpenAI-compatible LLM to judge FIX/KEEP for each suspect."""
+
+    def __init__(
+        self,
+        model: str = "qwen3.5:4b",
+        api_base: str = "http://localhost:11434/v1",
+    ):
         self.model = model
-        self._orig_env = os.environ.get("OLLAMA_NUM_GPU")
-        os.environ["OLLAMA_NUM_GPU"] = ollama_num_gpu
-        self._ensure_model()
+        self.api_base = api_base.rstrip("/")
+        self._check_connection()
 
-    def _ensure_model(self):
-        """Pull the model if not already downloaded."""
+    def _check_connection(self):
+        """Verify the API endpoint is reachable."""
+        url = f"{self.api_base}/models"
         try:
-            ollama.show(self.model)
-            logger.info("Qwen model ready: %s", self.model)
-        except ollama.ResponseError:
-            logger.info("Downloading model: %s ...", self.model)
-            ollama.pull(self.model)
-            logger.info("Model download complete: %s", self.model)
+            req = Request(url, method="GET")
+            with urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+                models = [m.get("id", "") for m in data.get("data", [])]
+                logger.info(
+                    "LLM API connected: %s (%d models available)",
+                    self.api_base, len(models),
+                )
+                if self.model not in models and models:
+                    logger.warning(
+                        "Model '%s' not found in available models: %s",
+                        self.model, models[:5],
+                    )
+        except (URLError, OSError) as e:
+            logger.warning("LLM API not reachable at %s: %s", self.api_base, e)
+            raise ConnectionError(
+                f"LLM API not reachable at {self.api_base}. "
+                f"Start your LLM server (ollama, llama-server, LM Studio, etc.) "
+                f"or use --no-qwen for BERT-only mode."
+            ) from e
 
     def judge(
         self,
@@ -55,25 +87,34 @@ class QwenJudge:
             line_b=fixed_line,
         )
 
-        try:
-            response = ollama.chat(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                options={"temperature": 0.0, "num_predict": 16},
-            )
-            answer = response["message"]["content"].strip().upper()
-            logger.debug("Qwen response: %s", answer)
+        payload = json.dumps({
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+            "max_tokens": 16,
+        }).encode("utf-8")
 
-            if "B" in answer:
-                return "FIX"
-            return "KEEP"
+        url = f"{self.api_base}/chat/completions"
+        req = Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read())
+                answer = data["choices"][0]["message"]["content"].strip().upper()
+                logger.debug("LLM response: %s", answer)
+
+                if "B" in answer:
+                    return "FIX"
+                return "KEEP"
         except Exception:
-            logger.exception("Qwen judgment failed, defaulting to KEEP")
+            logger.exception("LLM judgment failed, defaulting to KEEP")
             return "KEEP"
 
     def cleanup(self):
-        """Restore environment."""
-        if self._orig_env is not None:
-            os.environ["OLLAMA_NUM_GPU"] = self._orig_env
-        elif "OLLAMA_NUM_GPU" in os.environ:
-            del os.environ["OLLAMA_NUM_GPU"]
+        """No-op for HTTP-based client."""
+        pass

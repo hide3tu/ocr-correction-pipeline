@@ -14,7 +14,7 @@ from .escalation import (
     classify_without_qwen,
 )
 from .gpu_detect import resolve_device
-from .qwen_judge import QwenJudge
+from .qwen_judge import LlmJudge
 
 logger = logging.getLogger(__name__)
 
@@ -81,17 +81,13 @@ class Pipeline:
     def __init__(self, config: PipelineConfig | None = None):
         self.config = config or PipelineConfig()
         self._scanner: BertScanner | None = None
-        self._judge: QwenJudge | None = None
+        self._judge: LlmJudge | None = None
         self._bert_device: str = "cpu"
-        self._ollama_num_gpu: str = "0"
 
     def setup(self):
         """Initialize models based on config."""
-        self._bert_device, self._ollama_num_gpu = resolve_device(self.config.gpu_mode)
-        logger.info(
-            "Device config: BERT=%s, ollama GPU layers=%s",
-            self._bert_device, self._ollama_num_gpu,
-        )
+        self._bert_device, _ = resolve_device(self.config.gpu_mode)
+        logger.info("Device config: BERT=%s", self._bert_device)
 
         # Load BERT
         self._scanner = BertScanner(
@@ -100,11 +96,11 @@ class Pipeline:
             threshold=self.config.bert_threshold,
         )
 
-        # Load Qwen (if enabled)
-        if self.config.qwen_enabled:
-            self._judge = QwenJudge(
-                model=self.config.qwen_model,
-                ollama_num_gpu=self._ollama_num_gpu,
+        # Connect to LLM (if enabled)
+        if self.config.llm_enabled:
+            self._judge = LlmJudge(
+                model=self.config.llm_model,
+                api_base=self.config.llm_api_base,
             )
 
     def run(self, text: str) -> PipelineResult:
@@ -136,7 +132,7 @@ class Pipeline:
         t0 = time.perf_counter()
 
         for suspect in filtered:
-            if self.config.qwen_enabled and self._judge is not None:
+            if self.config.llm_enabled and self._judge is not None:
                 # Build A/B lines for Qwen
                 line = lines[suspect.line_index] if suspect.line_index < len(lines) else ""
                 top_fix = suspect.candidates[0][0] if suspect.candidates else ""
@@ -157,7 +153,7 @@ class Pipeline:
             corrections.append(result)
 
         timing["qwen_judge"] = time.perf_counter() - t0
-        if self.config.qwen_enabled:
+        if self.config.llm_enabled:
             logger.info("Qwen judged %d suspects in %.2fs", len(filtered), timing["qwen_judge"])
 
         return PipelineResult(

@@ -9,6 +9,7 @@ import sys
 from .config import PipelineConfig
 from .escalation import Verdict
 from .pipeline import Pipeline
+from .qwen_judge import KNOWN_ENDPOINTS
 
 
 def _setup_logging(verbose: bool):
@@ -47,7 +48,7 @@ def _print_results(result, use_color: bool = True):
             f"Line {c.suspect.line_index}: "
             f"'{c.suspect.original}' -> '{c.suggested_fix}' "
             f"(BERT: {c.suggested_prob:.0%}"
-            f"{', Qwen: ' + c.qwen_verdict if c.qwen_verdict else ''}"
+            f"{', LLM: ' + c.qwen_verdict if c.qwen_verdict else ''}"
             f"){end}"
         )
         if line_text:
@@ -63,10 +64,15 @@ def _print_results(result, use_color: bool = True):
         print(f"  total: {total:.2f}s")
 
 
+def _resolve_api_base(value: str) -> str:
+    """Resolve shorthand names to full URLs."""
+    return KNOWN_ENDPOINTS.get(value, value)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="ocr-corrector",
-        description="BERT + Qwen OCR correction pipeline",
+        description="BERT + LLM OCR correction pipeline",
     )
     parser.add_argument("input", nargs="?", help="Input text file (or - for stdin)")
     parser.add_argument("--image", help="Input image file (requires ndlocr-lite)")
@@ -76,14 +82,23 @@ def main():
         help="BERT model name (default: cl-tohoku/bert-base-japanese-v3)",
     )
     parser.add_argument(
-        "--qwen-model",
+        "--llm-model",
         default="qwen3.5:4b",
-        help="Qwen model name for ollama (default: qwen3.5:4b)",
+        help="LLM model name (default: qwen3.5:4b)",
     )
     parser.add_argument(
-        "--no-qwen",
+        "--llm-api",
+        default="http://localhost:11434/v1",
+        help=(
+            "OpenAI-compatible API base URL. "
+            "Shortcuts: ollama, llama-server, lm-studio. "
+            "(default: http://localhost:11434/v1)"
+        ),
+    )
+    parser.add_argument(
+        "--no-llm",
         action="store_true",
-        help="Disable Qwen judgment (BERT-only mode)",
+        help="Disable LLM judgment (BERT-only mode)",
     )
     parser.add_argument(
         "--gpu-mode",
@@ -123,8 +138,9 @@ def main():
     # Build config
     config = PipelineConfig(
         bert_model=args.bert_model,
-        qwen_model=args.qwen_model,
-        qwen_enabled=not args.no_qwen,
+        llm_model=args.llm_model,
+        llm_enabled=not args.no_llm,
+        llm_api_base=_resolve_api_base(args.llm_api),
         gpu_mode=args.gpu_mode,
         bert_threshold=args.bert_threshold,
         escalation_threshold=args.escalation_threshold,

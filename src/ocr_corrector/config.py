@@ -11,9 +11,10 @@ class PipelineConfig:
     bert_model: str = "cl-tohoku/bert-base-japanese-v3"
     bert_threshold: float = 0.01  # tokens below this probability are flagged
 
-    # Qwen settings
-    qwen_model: str = "qwen3.5:4b"
-    qwen_enabled: bool = True
+    # LLM settings (any OpenAI-compatible endpoint)
+    llm_model: str = "qwen3.5:4b"
+    llm_enabled: bool = True
+    llm_api_base: str = "http://localhost:11434/v1"  # ollama default
 
     # Escalation settings
     escalation_threshold: float = 0.50  # BERT confidence above this -> ESCALATE when Qwen says KEEP
