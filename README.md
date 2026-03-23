@@ -100,7 +100,7 @@ llama-serverは自動で起動・停止する。手動管理は不要。
 - 処理はOCR → BERT → LLMの順で段階的に進捗表示
 - 結果テーブルにAUTO-FIX（自動修正）/ ESCALATE（要確認）/ AUTO-KEEP（問題なし）を色分け表示
 
-WebUI使用時は `pip install "gradio>=4.0"` が別途必要。
+Gradioはインストーラーで一緒に入る。
 
 ## LLMバックエンド
 
