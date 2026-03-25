@@ -94,11 +94,17 @@ source .venv/bin/activate    # Mac/Linux
 # 画像から校正（NDLOCR-Lite OCR → BERT → LLM）
 python -m ocr_corrector scan.jpg
 
+# 複数画像をまとめてOCR→校正
+python -m ocr_corrector page1.png page2.png page3.png
+
 # テキストファイルから校正
 python -m ocr_corrector --text input.txt
 
 # BERT検出のみ（LLMなし、高速）
 python -m ocr_corrector --no-llm scan.jpg
+
+# 校正結果をファイルに保存（CSV、校正テキスト等）
+python -m ocr_corrector scan.jpg -o ./results
 ```
 
 llama-serverは自動で起動・停止する。手動管理は不要。
@@ -107,9 +113,15 @@ llama-serverは自動で起動・停止する。手動管理は不要。
 
 `start.bat` / `start.sh` で http://localhost:7860 にWebUIが開く。
 
-- 画像またはテキストを入力して校正実行
+- テキスト入力 / 画像入力（単体） / 複数画像入力の3タブ
 - 処理はOCR → BERT → LLMの順で段階的に進捗表示
 - 結果テーブルにAUTO-FIX（自動修正）/ ESCALATE（要確認）/ AUTO-KEEP（問題なし）を色分け表示
+- 校正完了後、結果ファイルをダウンロード可能:
+  - `ocr_raw.txt` — OCR原文（画像入力時）
+  - `corrections.csv` — 校正結果テーブル（Excel対応BOM付UTF-8）
+  - `corrected_bert.txt` — BERT高確信度の校正を適用
+  - `corrected_llm.txt` — LLM承認の校正のみ適用（LLM有効時）
+  - `corrected_all.txt` — BERT∪LLMの全校正を適用（LLM有効時）
 - LLM API URLの欄でollama、LM Studio等のバックエンドにも切り替え可能
 
 ## LLMバックエンド
@@ -146,6 +158,7 @@ ocr-correction-pipeline/
 │   ├── llm_server.py              # llama-server自動起動
 │   ├── gpu_detect.py              # GPU検出
 │   ├── ocr_frontend.py            # NDLOCR-Lite OCR
+│   ├── text_export.py              # 校正結果エクスポート（CSV/テキスト）
 │   ├── config.py                  # 設定
 │   └── webui.py                   # Gradio WebUI
 └── test_input.txt                 # テスト用OCRテキスト
