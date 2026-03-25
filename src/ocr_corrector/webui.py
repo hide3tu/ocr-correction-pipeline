@@ -170,6 +170,129 @@ def _run_pipeline_streaming(
         pipeline.cleanup()
 
 
+def _run_multi_image_streaming(
+    images,
+    bert_model: str,
+    llm_model: str,
+    llm_enabled: bool,
+    llm_api: str,
+    gpu_mode: str,
+    bert_threshold: float,
+    escalation_threshold: float,
+):
+    """Run pipeline on multiple images, yielding (table, timing, status, ocr_output, btn, files)."""
+    import gradio as gr
+
+    model_map = {
+        "tohoku-bert-v3": "cl-tohoku/bert-base-japanese-v3",
+        "luke-japanese-base-lite": "studio-ousia/luke-japanese-base-lite",
+    }
+    bert_model_name = model_map.get(bert_model, bert_model)
+
+    btn_busy = gr.update(value="処理中...", interactive=False)
+    btn_ready = gr.update(value="校正実行", interactive=True)
+    ocr_hide = gr.update(value="", visible=False)
+    ocr_display = ocr_hide
+
+    # Validate input
+    if not images:
+        yield [], "", "画像がアップロードされていません", ocr_hide, btn_ready, None
+        return
+
+    total_images = len(images)
+    page_texts: list[str] = []
+
+    # Stage 0: OCR each image sequentially
+    for i, img_path in enumerate(images):
+        yield [], "", f"OCR処理中: 画像 {i + 1}/{total_images}...", ocr_display, btn_busy, None
+        try:
+            from .ocr_frontend import ocr_image
+            page_text = ocr_image(img_path)
+            page_texts.append(page_text)
+        except Exception as e:
+            yield [], "", f"OCRエラー (画像 {i + 1}): {e}", ocr_display, btn_ready, None
+            return
+
+    # Combine OCR results
+    combined_ocr = "\n".join(t.rstrip("\n") for t in page_texts)
+    original_text = combined_ocr
+    ocr_display = gr.update(value=combined_ocr, visible=True)
+    yield [], "", (
+        f"OCR完了: {total_images}画像, {len(combined_ocr)}文字。BERTスキャン開始..."
+    ), ocr_display, btn_busy, None
+
+    # Run pipeline on combined text
+    config = PipelineConfig(
+        bert_model=bert_model_name,
+        llm_model=llm_model,
+        llm_enabled=llm_enabled,
+        llm_api_base=_resolve_api_base(llm_api),
+        gpu_mode=gpu_mode,
+        bert_threshold=bert_threshold,
+        escalation_threshold=escalation_threshold,
+    )
+
+    pipeline = Pipeline(config)
+    rows: list[list[Any]] = []
+    lines: list[str] = []
+    timing_str = ""
+
+    try:
+        for stage, data in pipeline.run_steps(combined_ocr, ocr_text=combined_ocr):
+            if stage == "bert":
+                lines = data["lines"]
+                timing_str = f"BERTスキャン: {data['time']:.1f}秒"
+                status = (
+                    f"BERT完了: {data['raw']}箇所検出 → フィルタ後{data['filtered']}箇所 "
+                    f"({data['time']:.1f}秒)"
+                )
+                if llm_enabled and data["filtered"] > 0:
+                    status += f"。LLM判定開始 (0/{data['filtered']})..."
+                yield [], timing_str, status, ocr_display, btn_busy, None
+
+            elif stage == "llm":
+                i = data["index"]
+                total = data["total"]
+                result = data["result"]
+                rows.append(_format_row(result, lines))
+                yield list(rows), timing_str, f"LLM判定中: {i+1}/{total}...", ocr_display, btn_busy, None
+
+            elif stage == "done":
+                final = data
+                table_data = [_format_row(c, final.lines) for c in final.corrections]
+                parts = []
+                for k, v in final.timing.items():
+                    label = {"bert_scan": "BERTスキャン", "llm_judge": "LLM判定"}.get(k, k)
+                    parts.append(f"{label}: {v:.1f}秒")
+                parts.append(f"合計: {sum(final.timing.values()):.1f}秒")
+                timing_str = " / ".join(parts)
+
+                n_fix = sum(1 for c in final.corrections if c.verdict == Verdict.AUTO_FIX)
+                n_esc = sum(1 for c in final.corrections if c.verdict == Verdict.ESCALATE)
+                n_keep = sum(1 for c in final.corrections if c.verdict == Verdict.AUTO_KEEP)
+                status = (
+                    f"完了 ({total_images}画像) | 検出: {final.raw_suspects}箇所 → "
+                    f"フィルタ後: {final.filtered_suspects}箇所 | "
+                    f"AUTO-FIX: {n_fix} | ESCALATE: {n_esc} | AUTO-KEEP: {n_keep}"
+                )
+
+                dl_files = generate_downloads(
+                    original_text=original_text,
+                    ocr_text=combined_ocr,
+                    resplit_lines=final.lines,
+                    corrections=final.corrections,
+                    llm_enabled=llm_enabled,
+                    autofix_threshold=config.autofix_threshold,
+                )
+                yield table_data, timing_str, status, ocr_display, btn_ready, dl_files
+
+    except Exception as e:
+        logger.exception("Multi-image pipeline failed")
+        yield [], "", f"パイプラインエラー: {e}", ocr_display, btn_ready, None
+    finally:
+        pipeline.cleanup()
+
+
 REPO_URL = "https://github.com/hide3tu/ocr-correction-pipeline"
 
 
@@ -258,14 +381,22 @@ def create_app():
                             label="OCRテキスト",
                             placeholder="OCRで読み取ったテキストを貼り付け...",
                         )
+                        run_btn_text = gr.Button("校正実行", variant="primary", size="lg")
                     with gr.TabItem("画像入力"):
                         image_input = gr.Image(
                             type="filepath",
                             label="画像ファイル",
                         )
                         gr.Markdown("*画像からOCRテキストを抽出して校正します*")
-
-                run_btn = gr.Button("校正実行", variant="primary", size="lg")
+                        run_btn_image = gr.Button("校正実行", variant="primary", size="lg")
+                    with gr.TabItem("複数画像入力"):
+                        multi_image_input = gr.File(
+                            file_count="multiple",
+                            file_types=["image"],
+                            label="画像ファイル（複数可）",
+                        )
+                        gr.Markdown("*複数の画像からOCRテキストを抽出して一括校正します*")
+                        run_btn_multi = gr.Button("校正実行", variant="primary", size="lg")
                 status_text = gr.Textbox(label="ステータス", interactive=False)
 
                 ocr_output = gr.Textbox(
@@ -297,14 +428,39 @@ def create_app():
                     interactive=False,
                 )
 
-        run_btn.click(
+        # Text tab: image=None so pipeline runs on text only
+        run_btn_text.click(
             fn=_run_pipeline_streaming,
             inputs=[
                 text_input, image_input,
                 bert_model, llm_model, llm_enabled, llm_api,
                 gpu_mode, bert_threshold, escalation_threshold,
             ],
-            outputs=[results_table, timing_text, status_text, ocr_output, run_btn, download_files],
+            outputs=[results_table, timing_text, status_text, ocr_output, run_btn_text, download_files],
+            concurrency_limit=1,
+            trigger_mode="once",
+        )
+        # Single image tab: same handler, dispatches on image presence
+        run_btn_image.click(
+            fn=_run_pipeline_streaming,
+            inputs=[
+                text_input, image_input,
+                bert_model, llm_model, llm_enabled, llm_api,
+                gpu_mode, bert_threshold, escalation_threshold,
+            ],
+            outputs=[results_table, timing_text, status_text, ocr_output, run_btn_image, download_files],
+            concurrency_limit=1,
+            trigger_mode="once",
+        )
+
+        run_btn_multi.click(
+            fn=_run_multi_image_streaming,
+            inputs=[
+                multi_image_input,
+                bert_model, llm_model, llm_enabled, llm_api,
+                gpu_mode, bert_threshold, escalation_threshold,
+            ],
+            outputs=[results_table, timing_text, status_text, ocr_output, run_btn_multi, download_files],
             concurrency_limit=1,
             trigger_mode="once",
         )

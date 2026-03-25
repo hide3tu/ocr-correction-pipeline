@@ -6,6 +6,7 @@ import csv
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -90,24 +91,30 @@ def _click_run(page):
 
 
 def _wait_for_completion(page, timeout_ms: int = 180_000):
-    """Wait until the status textarea (index 2) contains '完了'."""
+    """Wait until the status textarea (index 2) contains the final '完了 |' marker."""
     status_ta = page.locator("textarea[data-testid='textbox']").nth(2)
-    # Poll until status contains '完了' or timeout
+    # Match '完了 |' or '完了 (' to distinguish final status from intermediate 'OCR完了:'
     deadline = time.monotonic() + timeout_ms / 1000
     while time.monotonic() < deadline:
         val = status_ta.input_value()
-        if "完了" in val:
+        if "完了 |" in val or "完了 (" in val:
             return val
         time.sleep(1)
     raise TimeoutError(
-        f"Status did not show '完了' within {timeout_ms}ms. "
+        f"Status did not reach final state within {timeout_ms}ms. "
         f"Last value: {status_ta.input_value()!r}"
     )
 
 
+RESULT_FILE_NAMES = {"ocr_raw.txt", "corrections.csv",
+                     "corrected_bert.txt", "corrected_llm.txt", "corrected_all.txt"}
+
+
 def _get_download_links(page):
-    """Return list of download link elements in the file component."""
-    return page.locator("a[download]").all()
+    """Return download link elements for pipeline result files only."""
+    all_links = page.locator("a[download]").all()
+    return [a for a in all_links
+            if (a.get_attribute("download") or "") in RESULT_FILE_NAMES]
 
 
 # ---------- tests ----------
@@ -208,3 +215,70 @@ class TestDownloadFiles:
         assert content.count("\n") == TEST_INPUT.count("\n"), \
             f"Newline count mismatch: input has {TEST_INPUT.count(chr(10))}, output has {content.count(chr(10))}"
         print(f"BERT corrected text: {content.strip()!r}")
+
+
+# ---------- multi-image helpers ----------
+
+def _create_test_images(n: int = 2) -> list[str]:
+    """Create simple test images with text using Pillow."""
+    from PIL import Image, ImageDraw
+
+    tmpdir = tempfile.mkdtemp(prefix="ocr_test_")
+    paths = []
+    for i in range(n):
+        img = Image.new("RGB", (400, 100), "white")
+        draw = ImageDraw.Draw(img)
+        draw.text((10, 30), f"TEST PAGE {i + 1}", fill="black")
+        p = os.path.join(tmpdir, f"page_{i + 1}.png")
+        img.save(p)
+        paths.append(p)
+    return paths
+
+
+class TestMultiImage:
+    """Test the multi-image tab end-to-end."""
+
+    def test_multi_image_produces_downloads(self, browser_page):
+        """Upload multiple images -> OCR -> correction -> verify downloads."""
+        page = browser_page
+
+        # 1. Switch to the multi-image tab (3rd tab, index 2)
+        tabs = page.locator("button[role='tab']").all()
+        tabs[2].click()
+        time.sleep(0.5)
+
+        # 2. Disable LLM
+        _uncheck_llm(page)
+
+        # 3. Create test images and upload via the multiple file input
+        test_images = _create_test_images(2)
+        file_input = page.locator("input[type='file'][multiple]")
+        file_input.set_input_files(test_images)
+        time.sleep(1)
+
+        # 4. Click the multi-image run button (first "校正実行" in DOM — inside tab)
+        run_btns = page.get_by_role("button", name="校正実行").all()
+        run_btns[0].click()
+
+        # 5. Wait for multi-image completion — final status contains "完了 (N画像)"
+        status_ta = page.locator("textarea[data-testid='textbox']").nth(2)
+        deadline = time.monotonic() + 300
+        status = ""
+        while time.monotonic() < deadline:
+            status = status_ta.input_value()
+            if "完了 (2画像)" in status:
+                break
+            time.sleep(1)
+        assert "完了 (2画像)" in status, f"Expected '完了 (2画像)' in status, got: {status}"
+
+        # 6. Download files should be present (at least CSV + BERT txt + OCR raw)
+        dl_links = _get_download_links(page)
+        dl_names = [a.get_attribute("download") for a in dl_links]
+        print(f"Multi-image download links: {dl_names}")
+
+        assert any("ocr_raw.txt" in (n or "") for n in dl_names), \
+            f"ocr_raw.txt not found in {dl_names}"
+        assert any("corrections.csv" in (n or "") for n in dl_names), \
+            f"corrections.csv not found in {dl_names}"
+        assert any("corrected_bert.txt" in (n or "") for n in dl_names), \
+            f"corrected_bert.txt not found in {dl_names}"
