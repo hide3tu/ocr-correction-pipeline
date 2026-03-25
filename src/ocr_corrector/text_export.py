@@ -11,69 +11,59 @@ from typing import Callable
 from .escalation import CorrectionResult
 
 
-def _replace_in_line(line: str, original: str, replacement: str) -> str:
-    """Replace the first occurrence of a token in a line."""
-    if original in line:
-        return line.replace(original, replacement, 1)
-    return line
-
-
-def _apply_corrections_to_lines(
-    resplit_lines: list[str],
-    corrections: list[CorrectionResult],
-    filter_fn: Callable[[CorrectionResult], bool],
-) -> list[str]:
-    """Apply selected corrections to the re-split lines."""
-    corrected = list(resplit_lines)
-    for c in corrections:
-        if not filter_fn(c):
-            continue
-        idx = c.suspect.line_index
-        if idx < len(corrected):
-            corrected[idx] = _replace_in_line(
-                corrected[idx], c.suspect.original, c.suggested_fix
-            )
-    return corrected
-
-
-def _map_to_original_breaks(
-    original_text: str, corrected_resplit_lines: list[str]
-) -> str:
-    """Map corrected re-split text back to original line break positions.
-
-    The pipeline re-splits text by Japanese punctuation, changing line
-    boundaries.  This function restores the original newline positions after
-    corrections have been applied to the re-split lines.
-    """
-    original_flat = original_text.replace("\r", "").replace("\n", "")
-    corrected_flat = "".join(corrected_resplit_lines)
-
-    if len(original_flat) == len(corrected_flat):
-        # Same length — direct character mapping preserving original newlines
-        result: list[str] = []
-        flat_pos = 0
-        for ch in original_text:
-            if ch in ("\r", "\n"):
-                result.append(ch)
-            else:
-                if flat_pos < len(corrected_flat):
-                    result.append(corrected_flat[flat_pos])
-                flat_pos += 1
-        return "".join(result)
-
-    # Length changed — fall back to re-split line structure
-    return "\n".join(corrected_resplit_lines)
-
-
 def apply_corrections(
     original_text: str,
     resplit_lines: list[str],
     corrections: list[CorrectionResult],
     filter_fn: Callable[[CorrectionResult], bool],
 ) -> str:
-    """Apply selected corrections, preserving original line breaks."""
-    corrected = _apply_corrections_to_lines(resplit_lines, corrections, filter_fn)
-    return _map_to_original_breaks(original_text, corrected)
+    """Apply selected corrections directly to the original text.
+
+    Newlines in ``original_text`` are always preserved because replacements
+    are applied via a flat-text position mapping that skips newline characters.
+    """
+    # Compute the start offset of each re-split line in the flat text
+    line_starts: list[int] = []
+    offset = 0
+    for line in resplit_lines:
+        line_starts.append(offset)
+        offset += len(line)
+
+    # Build mapping: flat-text position -> index in original_text (skips \r\n)
+    flat_to_orig: list[int] = []
+    for i, ch in enumerate(original_text):
+        if ch not in ("\r", "\n"):
+            flat_to_orig.append(i)
+
+    # Collect (flat_pos, old_token, new_token) for each selected correction
+    replacements: list[tuple[int, str, str]] = []
+    for c in corrections:
+        if not filter_fn(c):
+            continue
+        idx = c.suspect.line_index
+        if idx >= len(resplit_lines):
+            continue
+        token_pos = resplit_lines[idx].find(c.suspect.original)
+        if token_pos < 0:
+            continue
+        flat_pos = line_starts[idx] + token_pos
+        replacements.append((flat_pos, c.suspect.original, c.suggested_fix))
+
+    if not replacements:
+        return original_text
+
+    # Apply from end to start so earlier positions stay valid
+    replacements.sort(key=lambda r: r[0], reverse=True)
+    chars = list(original_text)
+    for flat_pos, old_token, new_token in replacements:
+        end_flat = flat_pos + len(old_token) - 1
+        if end_flat >= len(flat_to_orig):
+            continue
+        orig_start = flat_to_orig[flat_pos]
+        orig_end = flat_to_orig[end_flat] + 1
+        chars[orig_start:orig_end] = list(new_token)
+
+    return "".join(chars)
 
 
 def build_csv(corrections: list[CorrectionResult], lines: list[str]) -> str:

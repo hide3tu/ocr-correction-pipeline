@@ -5,11 +5,15 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 from .config import PipelineConfig
 from .escalation import Verdict
 from .pipeline import Pipeline
 from .qwen_judge import KNOWN_ENDPOINTS
+
+IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "tiff", "tif", "bmp", "gif", "webp"}
+TEXT_EXTENSIONS = {"txt", "text", "csv"}
 
 
 def _setup_logging(verbose: bool):
@@ -69,15 +73,49 @@ def _resolve_api_base(value: str) -> str:
     return KNOWN_ENDPOINTS.get(value, value)
 
 
+def _is_image_file(path: str) -> bool:
+    ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    return ext in IMAGE_EXTENSIONS
+
+
+def _is_text_file(path: str) -> bool:
+    ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    return ext in TEXT_EXTENSIONS
+
+
+def _ocr_files(paths: list[str]) -> tuple[str, str]:
+    """OCR one or more image files. Returns (combined_text, ocr_text)."""
+    from .ocr_frontend import ocr_image
+
+    page_texts: list[str] = []
+    for i, path in enumerate(paths, 1):
+        label = f"({i}/{len(paths)}) " if len(paths) > 1 else ""
+        print(f"Running OCR {label}on {path}...", file=sys.stderr)
+        page_texts.append(ocr_image(path))
+
+    combined = "\n".join(t.rstrip("\n") for t in page_texts)
+    n = len(paths)
+    chars = len(combined)
+    print(f"OCR complete: {n} image{'s' if n > 1 else ''}, {chars} chars", file=sys.stderr)
+    return combined, combined
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="ocr-corrector",
         description="BERT + LLM OCR correction pipeline",
     )
-    parser.add_argument("input", nargs="?", help="Input image or text file")
+    parser.add_argument(
+        "input", nargs="*",
+        help="Input image(s) or text file (multiple images are OCR'd and concatenated)",
+    )
     parser.add_argument(
         "--text", action="store_true",
         help="Treat input as text file instead of image",
+    )
+    parser.add_argument(
+        "-o", "--output-dir",
+        help="Save correction results (CSV, corrected texts) to this directory",
     )
     parser.add_argument(
         "--bert-model",
@@ -152,28 +190,33 @@ def main():
 
     # Get input text
     text = None
+    ocr_text = None  # non-None when input came from OCR
+
     if not args.input and not sys.stdin.isatty():
-        # stdin
         text = sys.stdin.read()
-    elif args.input == "-":
+    elif args.input == ["-"]:
         text = sys.stdin.read()
     elif args.input and args.text:
-        # Explicit text mode
-        with open(args.input, encoding="utf-8") as f:
+        # Explicit text mode (first file only)
+        with open(args.input[0], encoding="utf-8") as f:
             text = f.read()
     elif args.input:
-        # Default: image input via NDLOCR-Lite
-        ext = args.input.rsplit(".", 1)[-1].lower() if "." in args.input else ""
-        if ext in ("txt", "text", "csv"):
-            # Text file detected
-            with open(args.input, encoding="utf-8") as f:
+        # Auto-detect: all images → OCR, text file → read
+        image_files = [p for p in args.input if _is_image_file(p)]
+        text_files = [p for p in args.input if _is_text_file(p)]
+
+        if image_files and text_files:
+            print("Error: cannot mix image and text files.", file=sys.stderr)
+            sys.exit(1)
+
+        if image_files:
+            text, ocr_text = _ocr_files(image_files)
+        elif text_files:
+            with open(text_files[0], encoding="utf-8") as f:
                 text = f.read()
         else:
-            # Image file -> OCR
-            from .ocr_frontend import ocr_image
-            print(f"Running OCR on {args.input}...")
-            text = ocr_image(args.input)
-            print(f"OCR complete: {len(text)} chars")
+            # Unknown extension — try as images
+            text, ocr_text = _ocr_files(args.input)
     else:
         parser.print_help()
         sys.exit(1)
@@ -187,6 +230,27 @@ def main():
     try:
         result = pipeline.run(text)
         _print_results(result, use_color=not args.no_color)
+
+        # Save result files if --output-dir specified
+        if args.output_dir:
+            from .text_export import generate_downloads
+
+            out = Path(args.output_dir)
+            out.mkdir(parents=True, exist_ok=True)
+
+            files = generate_downloads(
+                original_text=text,
+                ocr_text=ocr_text,
+                resplit_lines=result.lines,
+                corrections=result.corrections,
+                llm_enabled=config.llm_enabled,
+                autofix_threshold=config.autofix_threshold,
+            )
+            # Move from temp dir to output dir
+            for src in files:
+                dst = out / Path(src).name
+                Path(src).rename(dst)
+                print(f"  -> {dst}", file=sys.stderr)
     finally:
         pipeline.cleanup()
 
