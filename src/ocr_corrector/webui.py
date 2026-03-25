@@ -11,6 +11,7 @@ from .escalation import Verdict
 from .llm_server import DEFAULT_MODEL_DIR
 from .pipeline import Pipeline
 from .qwen_judge import KNOWN_ENDPOINTS
+from .text_export import generate_downloads
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ def _run_pipeline_streaming(
     bert_threshold: float,
     escalation_threshold: float,
 ):
-    """Run pipeline, yielding (table, timing, status, ocr_output) at each stage."""
+    """Run pipeline, yielding (table, timing, status, ocr_output, btn, files) at each stage."""
     import gradio as gr
 
     model_map = {
@@ -74,25 +75,28 @@ def _run_pipeline_streaming(
     # Stage 0: OCR (if image)
     ocr_text = None
     if image is not None:
-        yield [], "", "OCR処理中...", ocr_display, btn_busy
+        yield [], "", "OCR処理中...", ocr_display, btn_busy, None
         try:
             from .ocr_frontend import ocr_image
             ocr_text = ocr_image(image)
             text = ocr_text
         except Exception as e:
-            yield [], "", f"OCRエラー: {e}", ocr_display, btn_ready
+            yield [], "", f"OCRエラー: {e}", ocr_display, btn_ready, None
             return
 
     if not text or not text.strip():
-        yield [], "", "テキストが入力されていません", ocr_display, btn_ready
+        yield [], "", "テキストが入力されていません", ocr_display, btn_ready, None
         return
+
+    # Save original text for download (before pipeline re-splits by punctuation)
+    original_text = text
 
     # Show OCR text immediately when available
     if ocr_text:
         ocr_display = gr.update(value=ocr_text, visible=True)
-        yield [], "", f"OCR完了: {len(ocr_text)}文字。BERTスキャン開始...", ocr_display, btn_busy
+        yield [], "", f"OCR完了: {len(ocr_text)}文字。BERTスキャン開始...", ocr_display, btn_busy, None
     else:
-        yield [], "", "BERTスキャン開始...", ocr_display, btn_busy
+        yield [], "", "BERTスキャン開始...", ocr_display, btn_busy, None
 
     config = PipelineConfig(
         bert_model=bert_model_name,
@@ -120,14 +124,14 @@ def _run_pipeline_streaming(
                 )
                 if llm_enabled and data["filtered"] > 0:
                     status += f"。LLM判定開始 (0/{data['filtered']})..."
-                yield [], timing_str, status, ocr_display, btn_busy
+                yield [], timing_str, status, ocr_display, btn_busy, None
 
             elif stage == "llm":
                 i = data["index"]
                 total = data["total"]
                 result = data["result"]
                 rows.append(_format_row(result, lines))
-                yield list(rows), timing_str, f"LLM判定中: {i+1}/{total}...", ocr_display, btn_busy
+                yield list(rows), timing_str, f"LLM判定中: {i+1}/{total}...", ocr_display, btn_busy, None
 
             elif stage == "done":
                 final = data
@@ -147,11 +151,21 @@ def _run_pipeline_streaming(
                     f"フィルタ後: {final.filtered_suspects}箇所 | "
                     f"AUTO-FIX: {n_fix} | ESCALATE: {n_esc} | AUTO-KEEP: {n_keep}"
                 )
-                yield table_data, timing_str, status, ocr_display, btn_ready
+
+                # Generate download files
+                dl_files = generate_downloads(
+                    original_text=original_text,
+                    ocr_text=ocr_text,
+                    resplit_lines=final.lines,
+                    corrections=final.corrections,
+                    llm_enabled=llm_enabled,
+                    autofix_threshold=config.autofix_threshold,
+                )
+                yield table_data, timing_str, status, ocr_display, btn_ready, dl_files
 
     except Exception as e:
         logger.exception("Pipeline failed")
-        yield [], "", f"パイプラインエラー: {e}", ocr_display, btn_ready
+        yield [], "", f"パイプラインエラー: {e}", ocr_display, btn_ready, None
     finally:
         pipeline.cleanup()
 
@@ -270,6 +284,19 @@ def create_app():
 
                 timing_text = gr.Textbox(label="処理時間", interactive=False)
 
+                gr.Markdown("### ダウンロード")
+                gr.Markdown(
+                    "*OCR原文 / 校正結果CSV / BERT校正テキスト"
+                    "（確信度≥70%を適用） / LLM校正テキスト"
+                    "（LLM承認のみ適用） / 全校正テキスト"
+                    "（BERT∪LLM）*"
+                )
+                download_files = gr.File(
+                    label="校正結果ファイル",
+                    file_count="multiple",
+                    interactive=False,
+                )
+
         run_btn.click(
             fn=_run_pipeline_streaming,
             inputs=[
@@ -277,7 +304,7 @@ def create_app():
                 bert_model, llm_model, llm_enabled, llm_api,
                 gpu_mode, bert_threshold, escalation_threshold,
             ],
-            outputs=[results_table, timing_text, status_text, ocr_output, run_btn],
+            outputs=[results_table, timing_text, status_text, ocr_output, run_btn, download_files],
             concurrency_limit=1,
             trigger_mode="once",
         )

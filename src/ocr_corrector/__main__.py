@@ -122,6 +122,7 @@ def main():
         help="Escalation threshold for BERT confidence (default: 0.50)",
     )
     parser.add_argument("--webui", action="store_true", help="Launch Gradio WebUI")
+    parser.add_argument("--port", type=int, default=7860, help="WebUI server port (default: 7860)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     parser.add_argument("--no-color", action="store_true", help="Disable colored output")
 
@@ -132,7 +133,7 @@ def main():
     if args.webui:
         try:
             from .webui import launch
-            launch()
+            launch(server_port=args.port)
         except ImportError:
             print("Gradio is required for WebUI. Install with: pip install gradio", file=sys.stderr)
             sys.exit(1)
