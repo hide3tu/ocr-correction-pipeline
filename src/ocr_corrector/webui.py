@@ -74,11 +74,14 @@ def _run_pipeline_streaming(
 
     # Stage 0: OCR (if image)
     ocr_text = None
+    ocr_pages = None  # list[OcrPage] for PDF generation
     if image is not None:
         yield [], "", "OCR処理中...", ocr_display, btn_busy, None
         try:
-            from .ocr_frontend import ocr_image
-            ocr_text = ocr_image(image)
+            from .ocr_frontend import ocr_image_with_layout
+            page = ocr_image_with_layout(image)
+            ocr_text = page.text
+            ocr_pages = [page]
             text = ocr_text
         except Exception as e:
             yield [], "", f"OCRエラー: {e}", ocr_display, btn_ready, None
@@ -160,6 +163,7 @@ def _run_pipeline_streaming(
                     corrections=final.corrections,
                     llm_enabled=llm_enabled,
                     autofix_threshold=config.autofix_threshold,
+                    pages=ocr_pages,
                 )
                 yield table_data, timing_str, status, ocr_display, btn_ready, dl_files
 
@@ -200,21 +204,21 @@ def _run_multi_image_streaming(
         return
 
     total_images = len(images)
-    page_texts: list[str] = []
+    ocr_pages = []  # list[OcrPage] for PDF generation
 
     # Stage 0: OCR each image sequentially
     for i, img_path in enumerate(images):
         yield [], "", f"OCR処理中: 画像 {i + 1}/{total_images}...", ocr_display, btn_busy, None
         try:
-            from .ocr_frontend import ocr_image
-            page_text = ocr_image(img_path)
-            page_texts.append(page_text)
+            from .ocr_frontend import ocr_image_with_layout
+            page = ocr_image_with_layout(img_path)
+            ocr_pages.append(page)
         except Exception as e:
             yield [], "", f"OCRエラー (画像 {i + 1}): {e}", ocr_display, btn_ready, None
             return
 
     # Combine OCR results
-    combined_ocr = "\n".join(t.rstrip("\n") for t in page_texts)
+    combined_ocr = "\n".join(pg.text.rstrip("\n") for pg in ocr_pages)
     original_text = combined_ocr
     ocr_display = gr.update(value=combined_ocr, visible=True)
     yield [], "", (
@@ -283,6 +287,7 @@ def _run_multi_image_streaming(
                     corrections=final.corrections,
                     llm_enabled=llm_enabled,
                     autofix_threshold=config.autofix_threshold,
+                    pages=ocr_pages,
                 )
                 yield table_data, timing_str, status, ocr_display, btn_ready, dl_files
 
@@ -396,7 +401,7 @@ def create_app():
                             label="画像ファイル（複数可）",
                         )
                         gr.Markdown("*複数の画像からOCRテキストを抽出して一括校正します*")
-                        run_btn_multi = gr.Button("校正実行", variant="primary", size="lg")
+                        run_btn_multi = gr.Button("校正実行", variant="primary", size="lg", elem_id="run-btn-multi")
                 status_text = gr.Textbox(label="ステータス", interactive=False)
 
                 ocr_output = gr.Textbox(

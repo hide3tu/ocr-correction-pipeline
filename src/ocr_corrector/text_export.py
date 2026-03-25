@@ -94,6 +94,7 @@ def generate_downloads(
     corrections: list[CorrectionResult],
     llm_enabled: bool,
     autofix_threshold: float = 0.70,
+    pages=None,
 ) -> list[str]:
     """Generate download files and return list of file paths.
 
@@ -103,6 +104,7 @@ def generate_downloads(
       - corrected_bert.txt   : BERT auto-fix applied (prob >= autofix_threshold)
       - corrected_llm.txt    : LLM-approved corrections only (if LLM enabled)
       - corrected_all.txt    : BERT OR LLM corrections (if LLM enabled)
+      - searchable.pdf       : Image + transparent text PDF (if pages provided)
     """
     tmpdir = Path(tempfile.mkdtemp(prefix="ocr_correction_"))
     files: list[str] = []
@@ -148,5 +150,28 @@ def generate_downloads(
         p = tmpdir / "corrected_all.txt"
         p.write_text(all_text, encoding="utf-8")
         files.append(str(p))
+
+    # 6. Searchable PDF (only if image input with layout data)
+    if pages:
+        from .pdf_export import generate_searchable_pdf
+
+        # Use the most complete corrected text for PDF
+        all_filter = (
+            (lambda c: c.suggested_prob >= autofix_threshold or c.qwen_verdict == "FIX")
+            if llm_enabled
+            else (lambda c: c.suggested_prob >= autofix_threshold)
+        )
+        # Build per-page corrected texts
+        page_corrected: list[str] = []
+        for pg in pages:
+            page_corrected.append(
+                apply_corrections(pg.text, resplit_lines, corrections, all_filter)
+            )
+
+        pdf_path = generate_searchable_pdf(pages, page_corrected)
+        if pdf_path:
+            dst = tmpdir / "searchable.pdf"
+            Path(pdf_path).rename(dst)
+            files.append(str(dst))
 
     return files

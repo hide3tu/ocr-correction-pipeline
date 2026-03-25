@@ -259,6 +259,44 @@ print(path)
 }
 
 # ============================================================
+# Download CJK font for searchable PDF
+# ============================================================
+Write-Host ""
+Write-Host "=== Setting up CJK font ===" -ForegroundColor Cyan
+
+$fontsDir = Join-Path $PWD "fonts"
+if (-not (Test-Path $fontsDir)) { New-Item -ItemType Directory -Path $fontsDir | Out-Null }
+
+$fontFile = Join-Path $fontsDir "ipaexg.ttf"
+if (Test-Path $fontFile) {
+    Write-Host "IPAex Gothic font already exists. Skipping download."
+} else {
+    $fontUrl = "https://moji.or.jp/wp-content/ipafont/IPAexfont/ipaexg00401.zip"
+    $fontZip = Join-Path $fontsDir "ipaexg.zip"
+    Write-Host "Downloading IPAex Gothic font..."
+    try {
+        Invoke-WebRequest -Uri $fontUrl -OutFile $fontZip
+        $extractCode = @"
+import zipfile
+with zipfile.ZipFile(r'$fontZip') as z:
+    for name in z.namelist():
+        if name.endswith('.ttf'):
+            with z.open(name) as src, open(r'$fontFile', 'wb') as dst:
+                dst.write(src.read())
+            break
+"@
+        $extractTmp = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "font_extract.py")
+        Set-Content -Path $extractTmp -Value $extractCode -Encoding UTF8
+        & python $extractTmp
+        Remove-Item $extractTmp
+        Remove-Item $fontZip -Force
+        Write-Host "IPAex Gothic font ready" -ForegroundColor Green
+    } catch {
+        Write-Host "WARNING: Font download failed. PDF generation will use system fonts as fallback." -ForegroundColor Yellow
+    }
+}
+
+# ============================================================
 # Done
 # ============================================================
 Write-Host ""

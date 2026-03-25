@@ -83,21 +83,21 @@ def _is_text_file(path: str) -> bool:
     return ext in TEXT_EXTENSIONS
 
 
-def _ocr_files(paths: list[str]) -> tuple[str, str]:
-    """OCR one or more image files. Returns (combined_text, ocr_text)."""
-    from .ocr_frontend import ocr_image
+def _ocr_files(paths: list[str]) -> tuple[str, str, list]:
+    """OCR one or more image files. Returns (combined_text, ocr_text, pages)."""
+    from .ocr_frontend import ocr_image_with_layout
 
-    page_texts: list[str] = []
+    pages = []
     for i, path in enumerate(paths, 1):
         label = f"({i}/{len(paths)}) " if len(paths) > 1 else ""
         print(f"Running OCR {label}on {path}...", file=sys.stderr)
-        page_texts.append(ocr_image(path))
+        pages.append(ocr_image_with_layout(path))
 
-    combined = "\n".join(t.rstrip("\n") for t in page_texts)
+    combined = "\n".join(pg.text.rstrip("\n") for pg in pages)
     n = len(paths)
     chars = len(combined)
     print(f"OCR complete: {n} image{'s' if n > 1 else ''}, {chars} chars", file=sys.stderr)
-    return combined, combined
+    return combined, combined, pages
 
 
 def main():
@@ -191,6 +191,7 @@ def main():
     # Get input text
     text = None
     ocr_text = None  # non-None when input came from OCR
+    ocr_pages = None  # list[OcrPage] for PDF generation
 
     if not args.input and not sys.stdin.isatty():
         text = sys.stdin.read()
@@ -210,13 +211,13 @@ def main():
             sys.exit(1)
 
         if image_files:
-            text, ocr_text = _ocr_files(image_files)
+            text, ocr_text, ocr_pages = _ocr_files(image_files)
         elif text_files:
             with open(text_files[0], encoding="utf-8") as f:
                 text = f.read()
         else:
             # Unknown extension — try as images
-            text, ocr_text = _ocr_files(args.input)
+            text, ocr_text, ocr_pages = _ocr_files(args.input)
     else:
         parser.print_help()
         sys.exit(1)
@@ -245,6 +246,7 @@ def main():
                 corrections=result.corrections,
                 llm_enabled=config.llm_enabled,
                 autofix_threshold=config.autofix_threshold,
+                pages=ocr_pages,
             )
             # Move from temp dir to output dir
             for src in files:

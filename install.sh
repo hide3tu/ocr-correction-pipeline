@@ -204,6 +204,37 @@ print(path)
 fi
 
 # ============================================================
+# Download CJK font for searchable PDF
+# ============================================================
+echo ""
+echo "=== Setting up CJK font ==="
+
+mkdir -p fonts
+
+if [ -f "fonts/ipaexg.ttf" ]; then
+    echo "IPAex Gothic font already exists. Skipping download."
+else
+    echo "Downloading IPAex Gothic font..."
+    FONT_URL="https://moji.or.jp/wp-content/ipafont/IPAexfont/ipaexg00401.zip"
+    curl -L -o "fonts/ipaexg.zip" "$FONT_URL" 2>/dev/null
+    if [ -f "fonts/ipaexg.zip" ]; then
+        python -c "
+import zipfile
+with zipfile.ZipFile('fonts/ipaexg.zip') as z:
+    for name in z.namelist():
+        if name.endswith('.ttf'):
+            with z.open(name) as src, open('fonts/ipaexg.ttf', 'wb') as dst:
+                dst.write(src.read())
+            break
+"
+        rm -f "fonts/ipaexg.zip"
+        echo "IPAex Gothic font ready"
+    else
+        echo "WARNING: Font download failed. PDF generation will use system fonts as fallback."
+    fi
+fi
+
+# ============================================================
 # Done
 # ============================================================
 echo ""
