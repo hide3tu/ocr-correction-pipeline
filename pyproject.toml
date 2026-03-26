@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ocr-corrector"
-version = "0.4.0"
+version = "0.5.0"
 description = "BERT perplexity scan + Qwen LLM judgment pipeline for OCR error correction"
 requires-python = ">=3.10"
 dependencies = [

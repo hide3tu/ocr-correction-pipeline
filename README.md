@@ -122,6 +122,7 @@ llama-serverは自動で起動・停止する。手動管理は不要。
   - `corrected_bert.txt` — BERT高確信度の校正を適用
   - `corrected_llm.txt` — LLM承認の校正のみ適用（LLM有効時）
   - `corrected_all.txt` — BERT∪LLMの全校正を適用（LLM有効時）
+  - `searchable.pdf` — 画像+透明テキストの検索可能PDF（画像入力時）
 - LLM API URLの欄でollama、LM Studio等のバックエンドにも切り替え可能
 
 ## LLMバックエンド
@@ -158,6 +159,7 @@ ocr-correction-pipeline/
 │   ├── llm_server.py              # llama-server自動起動
 │   ├── gpu_detect.py              # GPU検出
 │   ├── ocr_frontend.py            # NDLOCR-Lite OCR
+│   ├── pdf_export.py               # 検索可能PDF生成（透明テキスト付き）
 │   ├── text_export.py              # 校正結果エクスポート（CSV/テキスト）
 │   ├── config.py                  # 設定
 │   └── webui.py                   # Gradio WebUI
