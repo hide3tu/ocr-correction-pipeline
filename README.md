@@ -31,23 +31,34 @@ Apple Silicon (M1/M2/M3/M4) は統合メモリなのでVRAM制約なし。
 
 PowerShell（Windows標準搭載）で実行。PowerShell 7は不要。
 
-事前に以下を入れておくのを推奨（PATHを通す設定を忘れずに）。未インストールでもインストーラーがwinget経由で自動インストールを試みる。
+事前に [Python 3.12](https://www.python.org/downloads/) を入れておくのを推奨（インストール時に「Add python.exe to PATH」にチェック）。未インストールでもインストーラーがwinget経由で自動インストールを試みる。Gitはあると速いがなくても動く。
 
-- [Python 3.12](https://www.python.org/downloads/) — インストール時に「Add python.exe to PATH」にチェック
-- [Git](https://git-scm.com/download/win)
+**方法A: リリースページからZIPダウンロード（Git不要）**
+
+1. [Releases](https://github.com/hide3tu/ocr-correction-pipeline/releases) から最新版の「Source code (zip)」をダウンロード
+2. ZIPを展開してフォルダに入る
+3. `install.ps1` を右クリック →「PowerShellで実行」、または以下を実行:
 
 ```powershell
-# まだリポジトリを取得していない場合（Gitがあるなら）
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+**方法B: git clone（Gitがある場合）**
+
+```powershell
 git clone https://github.com/hide3tu/ocr-correction-pipeline.git
 cd ocr-correction-pipeline
-
-# GitがなければGitHubからZIPダウンロード→展開でもOK
-
-# インストール
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
 ### Mac / Linux
+
+**方法A: リリースページからダウンロード（Git不要）**
+
+1. [Releases](https://github.com/hide3tu/ocr-correction-pipeline/releases) から最新版の「Source code (tar.gz)」をダウンロード
+2. 展開してフォルダに入り `bash install.sh`
+
+**方法B: git clone**
 
 ```bash
 git clone https://github.com/hide3tu/ocr-correction-pipeline.git
@@ -58,14 +69,14 @@ bash install.sh
 インストーラーが自動で行うこと:
 
 1. **Python** — 未インストールならwinget経由で自動インストール（Windows）
-2. **Git** — 未インストールならwinget経由で自動インストール（Windows）
-3. venv作成 + GPU検出に応じたPyTorchインストール
-4. BERT関連パッケージ（transformers, fugashi, unidic-lite等）
-5. NDLOCR-Lite（OCRエンジン、git clone + 依存インストール）
-6. llama-serverバイナリ（llama.cpp最新リリースから自動ダウンロード）
-7. LLMモデル（Qwen3.5-4B Q4_K_M、HuggingFaceから自動ダウンロード）
+2. venv作成 + GPU検出に応じたPyTorchインストール
+3. BERT関連パッケージ（transformers, fugashi, unidic-lite等）
+4. NDLOCR-Lite — Gitがあればclone、なければGitHubソースアーカイブを自動DL
+5. llama-serverバイナリ（llama.cpp最新リリースから自動ダウンロード）
+6. LLMモデル（Qwen3.5-4B Q4_K_M、HuggingFaceから自動ダウンロード）
+7. Gradio（WebUI用）
 
-Windowsの場合、PythonもGitも入っていない状態からインストーラーだけで全部揃う。
+Gitは入れておくとインストールが速い（cloneの方がソースアーカイブDLより効率的）。なくても動く。
 
 ## 使い方
 
@@ -83,35 +94,39 @@ source .venv/bin/activate    # Mac/Linux
 # 画像から校正（NDLOCR-Lite OCR → BERT → LLM）
 python -m ocr_corrector scan.jpg
 
+# 複数画像をまとめてOCR→校正
+python -m ocr_corrector page1.png page2.png page3.png
+
 # テキストファイルから校正
 python -m ocr_corrector --text input.txt
 
 # BERT検出のみ（LLMなし、高速）
 python -m ocr_corrector --no-llm scan.jpg
+
+# 校正結果をファイルに保存（CSV、校正テキスト等）
+python -m ocr_corrector scan.jpg -o ./results
 ```
 
 llama-serverは自動で起動・停止する。手動管理は不要。
 
 ## WebUI
 
-`python -m ocr_corrector --webui` で http://localhost:7860 にアクセス。
+`start.bat` / `start.sh` で http://localhost:7860 にWebUIが開く。
 
-- 画像またはテキストを入力して校正実行
+- テキスト入力 / 画像入力（単体） / 複数画像入力の3タブ
 - 処理はOCR → BERT → LLMの順で段階的に進捗表示
 - 結果テーブルにAUTO-FIX（自動修正）/ ESCALATE（要確認）/ AUTO-KEEP（問題なし）を色分け表示
-
-WebUI使用時は `pip install "gradio>=4.0"` が別途必要。
+- 校正完了後、結果ファイルをダウンロード可能:
+  - `ocr_raw.txt` — OCR原文（画像入力時）
+  - `corrections.csv` — 校正結果テーブル（Excel対応BOM付UTF-8）
+  - `corrected_bert.txt` — BERT高確信度の校正を適用
+  - `corrected_llm.txt` — LLM承認の校正のみ適用（LLM有効時）
+  - `corrected_all.txt` — BERT∪LLMの全校正を適用（LLM有効時）
+- LLM API URLの欄でollama、LM Studio等のバックエンドにも切り替え可能
 
 ## LLMバックエンド
 
-デフォルトはllama-server（llama.cpp）。OpenAI互換APIなら何でも使える。
-
-```bash
-# 別のLLMバックエンドを使う場合
-python -m ocr_corrector --llm-api ollama scan.jpg
-python -m ocr_corrector --llm-api lm-studio scan.jpg
-python -m ocr_corrector --llm-api http://192.168.1.100:8080/v1 scan.jpg
-```
+デフォルトはllama-server（llama.cpp）。OpenAI互換APIなら何でも使える。WebUIのLLM API URL欄か、CLIの `--llm-api` オプションで切り替え。
 
 モデル差し替えは `llm/models/` にGGUFファイルを置くだけ。
 
@@ -128,6 +143,7 @@ python -m ocr_corrector --gpu-mode cpu-only scan.jpg    # 全部CPU
 
 ```
 ocr-correction-pipeline/
+├── start.bat / start.sh           # WebUI起動（ダブルクリック）
 ├── install.sh / install.ps1       # インストーラー
 ├── llm/                           # 自動配置（git管理外）
 │   ├── llama-server(.exe)
@@ -142,6 +158,7 @@ ocr-correction-pipeline/
 │   ├── llm_server.py              # llama-server自動起動
 │   ├── gpu_detect.py              # GPU検出
 │   ├── ocr_frontend.py            # NDLOCR-Lite OCR
+│   ├── text_export.py              # 校正結果エクスポート（CSV/テキスト）
 │   ├── config.py                  # 設定
 │   └── webui.py                   # Gradio WebUI
 └── test_input.txt                 # テスト用OCRテキスト

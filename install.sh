@@ -53,10 +53,32 @@ fi
 echo ""
 echo "=== Setting up NDLOCR-Lite ==="
 if [ -d "ndlocr-lite" ]; then
-    echo "ndlocr-lite already exists. Skipping clone."
-else
-    echo "Cloning ndlocr-lite..."
+    echo "ndlocr-lite already exists. Skipping."
+elif command -v git &>/dev/null; then
+    echo "Cloning ndlocr-lite (via git)..."
     git clone https://github.com/ndl-lab/ndlocr-lite.git
+else
+    echo "Git not found. Downloading ndlocr-lite source archive..."
+    # Release assets are GUI app bundles, not Python source.
+    # Use GitHub source archive instead (contains requirements.txt + src/).
+    NDLOCR_RELEASE=$(curl -sL "https://api.github.com/repos/ndl-lab/ndlocr-lite/releases/latest")
+    NDLOCR_TAG=$(echo "$NDLOCR_RELEASE" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")
+
+    NDLOCR_URL="https://github.com/ndl-lab/ndlocr-lite/archive/refs/tags/${NDLOCR_TAG}.tar.gz"
+    echo "Downloading ndlocr-lite source (v$NDLOCR_TAG)..."
+    curl -L -o "ndlocr-lite-src.tar.gz" "$NDLOCR_URL"
+    echo "Extracting..."
+    tar xzf "ndlocr-lite-src.tar.gz"
+    rm -f "ndlocr-lite-src.tar.gz"
+    # GitHub archives extract to ndlocr-lite-{tag}/
+    EXTRACTED=$(find . -maxdepth 1 -type d -name "ndlocr-lite-*" | head -1)
+    if [ -n "$EXTRACTED" ]; then
+        mv "$EXTRACTED" ndlocr-lite
+        echo "ndlocr-lite ready (source v$NDLOCR_TAG)"
+    else
+        echo "WARNING: ndlocr-lite extraction failed."
+        echo "Download manually from: https://github.com/ndl-lab/ndlocr-lite"
+    fi
 fi
 echo "Installing ndlocr-lite dependencies..."
 pip install -r ndlocr-lite/requirements.txt
@@ -178,6 +200,37 @@ print(path)
         echo "Model ready: $(basename $FOUND_GGUF)"
     else
         echo "WARNING: Model download failed. Place a .gguf file in llm/models/"
+    fi
+fi
+
+# ============================================================
+# Download CJK font for searchable PDF
+# ============================================================
+echo ""
+echo "=== Setting up CJK font ==="
+
+mkdir -p fonts
+
+if [ -f "fonts/ipaexg.ttf" ]; then
+    echo "IPAex Gothic font already exists. Skipping download."
+else
+    echo "Downloading IPAex Gothic font..."
+    FONT_URL="https://moji.or.jp/wp-content/ipafont/IPAexfont/ipaexg00401.zip"
+    curl -L -o "fonts/ipaexg.zip" "$FONT_URL" 2>/dev/null
+    if [ -f "fonts/ipaexg.zip" ]; then
+        python -c "
+import zipfile
+with zipfile.ZipFile('fonts/ipaexg.zip') as z:
+    for name in z.namelist():
+        if name.endswith('.ttf'):
+            with z.open(name) as src, open('fonts/ipaexg.ttf', 'wb') as dst:
+                dst.write(src.read())
+            break
+"
+        rm -f "fonts/ipaexg.zip"
+        echo "IPAex Gothic font ready"
+    else
+        echo "WARNING: Font download failed. PDF generation will use system fonts as fallback."
     fi
 fi
 
