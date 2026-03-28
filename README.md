@@ -36,12 +36,17 @@ PowerShell（Windows標準搭載）で実行。PowerShell 7は不要。
 **方法A: リリースページからZIPダウンロード（Git不要）**
 
 1. [Releases](https://github.com/hide3tu/ocr-correction-pipeline/releases) から最新版の「Source code (zip)」をダウンロード
-2. ZIPを展開してフォルダに入る
-3. `install.ps1` を右クリック →「PowerShellで実行」、または以下を実行:
+2. ZIPを展開する（**注意**: 展開すると `ocr-correction-pipeline-x.x.x` フォルダの中にもう一つ同名フォルダが入っている場合がある。`install.ps1` があるフォルダまで入ること）
+3. `install.bat` をダブルクリックして実行
+
+**install.batがうまくいかない場合**は、PowerShellを開いて手動実行:
 
 ```powershell
+cd C:\Users\<ユーザー名>\Desktop\ocr-correction-pipeline-x.x.x
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
+
+> **注意**: コマンドは手打ちかREADMEからコピペすること。Webページ経由のコピペだと全角文字が混入してエラーになる場合がある。`powershell` を先頭に付け忘れると `-ExecutionPolicy` がコマンド名として認識されエラーになる。
 
 **方法B: git clone（Gitがある場合）**
 
@@ -82,7 +87,9 @@ Gitは入れておくとインストールが速い（cloneの方がソースア
 
 ### WebUI（推奨）
 
-`start.bat`（Windows）または `start.sh`（Mac/Linux）をダブルクリック。ブラウザで http://localhost:7860 が開く。
+`start.bat`（Windows）または `start.sh`（Mac/Linux）をダブルクリック。ブラウザが自動で http://localhost:7860 を開く。
+
+> ブラウザが開かない場合は手動で http://localhost:7860 にアクセス。
 
 ### コマンドライン
 
@@ -145,7 +152,8 @@ python -m ocr_corrector --gpu-mode cpu-only scan.jpg    # 全部CPU
 ```
 ocr-correction-pipeline/
 ├── start.bat / start.sh           # WebUI起動（ダブルクリック）
-├── install.sh / install.ps1       # インストーラー
+├── install.bat                    # インストーラー起動（Windows、ダブルクリック）
+├── install.sh / install.ps1       # インストーラー本体
 ├── llm/                           # 自動配置（git管理外）
 │   ├── llama-server(.exe)
 │   └── models/*.gguf

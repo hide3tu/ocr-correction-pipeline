@@ -93,6 +93,30 @@ if ($hasNvidia) {
     & pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 }
 
+# Verify PyTorch installed correctly
+$torchCheck = & python -c "import torch; print(torch.__version__)" 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "WARNING: PyTorch installation may have failed." -ForegroundColor Red
+    Write-Host "Retrying with pip (no cache)..." -ForegroundColor Yellow
+    if ($hasNvidia) {
+        & pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124 --no-cache-dir
+    } else {
+        & pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu --no-cache-dir
+    }
+    $torchCheck2 = & python -c "import torch; print(torch.__version__)" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: PyTorch installation failed." -ForegroundColor Red
+        Write-Host "After installation completes, run manually:" -ForegroundColor Yellow
+        Write-Host "  .\.venv\Scripts\Activate.ps1" -ForegroundColor Cyan
+        Write-Host "  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu" -ForegroundColor Cyan
+    } else {
+        Write-Host "PyTorch $torchCheck2 installed (retry succeeded)" -ForegroundColor Green
+    }
+} else {
+    Write-Host "PyTorch $torchCheck OK" -ForegroundColor Green
+}
+
 # Install package
 Write-Host ""
 Write-Host "Installing ocr-corrector..."
@@ -309,3 +333,5 @@ Write-Host "  python -m ocr_corrector input.txt"
 Write-Host ""
 Write-Host "llama-server will start automatically when needed."
 Write-Host "For BERT-only mode (no LLM): python -m ocr_corrector --no-llm input.txt"
+Write-Host ""
+Read-Host "Press Enter to exit"

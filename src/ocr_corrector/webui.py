@@ -480,6 +480,7 @@ def launch(share: bool = False, server_port: int = 7860):
     app.launch(
         share=share,
         server_port=server_port,
+        inbrowser=True,
         theme=gr.themes.Soft(),
         footer_links=[],
     )
