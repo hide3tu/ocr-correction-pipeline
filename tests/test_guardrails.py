@@ -96,6 +96,15 @@ def test_guard_candidate_keeps_general_mode_open_for_same_candidate():
     ) is None
 
 
+def test_guard_candidate_blocks_registered_protected_term():
+    suspect = _suspect("魔", "「", prob=0.73)
+    assert _guard_candidate(
+        suspect,
+        line="魔美は帳場までやってきて、",
+        protected_terms=("魔美",),
+    ) == ("proper_noun", "保護語句に含まれるため自動修正しない")
+
+
 def test_resplit_by_punctuation_splits_dialogue_at_question_mark():
     text = "「ちゃんとやっとる?\n店の裏から和装に着替えた鷹美が出てきて、もう昼過ぎだと気づいた。"
     assert _resplit_by_punctuation(text).splitlines()[0] == "「ちゃんとやっとる?"

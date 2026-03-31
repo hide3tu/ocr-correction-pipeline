@@ -44,6 +44,15 @@ MODE_RULES = {
 }
 
 
+def _format_known_terms(terms: list[str]) -> str:
+    if not terms:
+        return "既知の保護語句: (なし)"
+    preview = " / ".join(terms[:30])
+    if len(terms) > 30:
+        preview += " / ..."
+    return f"既知の保護語句: {preview}"
+
+
 @dataclass(frozen=True)
 class JudgeResult:
     """Structured LLM judgment for a candidate correction."""
@@ -98,7 +107,9 @@ JSONのみで答えてください。
 修正候補: {fixed_token}
 
 A: {line_a}
-B: {line_b}"""
+B: {line_b}
+
+{known_terms}"""
 
 SEMANTIC_CHECK_PROMPT = """あなたはOCR校正の後検査器です。
 Aは原文、Bは修正候補適用後の文です。
@@ -118,7 +129,9 @@ JSONのみで答えてください。
 修正候補: {fixed_token}
 
 A: {line_a}
-B: {line_b}"""
+B: {line_b}
+
+{known_terms}"""
 
 # Well-known endpoints
 KNOWN_ENDPOINTS = {
@@ -136,10 +149,12 @@ class LlmJudge:
         model: str = "qwen3.5:4b",
         api_base: str = "http://localhost:11434/v1",
         mode: str = "general",
+        protected_terms: list[str] | None = None,
     ):
         self.model = model
         self.api_base = api_base.rstrip("/")
         self.mode = mode if mode in MODE_RULES else "general"
+        self.protected_terms = [term.strip() for term in (protected_terms or []) if term.strip()]
         self._check_connection()
 
     def _check_connection(self):
@@ -200,6 +215,7 @@ class LlmJudge:
             fixed_token=fixed_token or "(不明)",
             line_a=original_line,
             line_b=fixed_line,
+            known_terms=_format_known_terms(self.protected_terms),
         )
 
         payload = json.dumps({
@@ -243,6 +259,7 @@ class LlmJudge:
             fixed_token=fixed_token or "(不明)",
             line_a=original_line,
             line_b=fixed_line,
+            known_terms=_format_known_terms(self.protected_terms),
         )
 
         payload = json.dumps({

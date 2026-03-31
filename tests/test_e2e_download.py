@@ -86,7 +86,7 @@ def _uncheck_llm(page):
 
 def _wait_for_status(page, marker: str, timeout_s: int = 180):
     """Poll status textarea until it contains `marker`."""
-    status_ta = page.locator("textarea[data-testid='textbox']").nth(2)
+    status_ta = page.get_by_label("ステータス")
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         val = status_ta.input_value()
@@ -111,7 +111,7 @@ class TestTextInput:
         ctx, page = _fresh_page(server_and_browser[1])
         try:
             _uncheck_llm(page)
-            page.locator("textarea[data-testid='textbox']").nth(1).fill(TEST_INPUT)
+            page.get_by_label("OCRテキスト").fill(TEST_INPUT)
             page.get_by_role("button", name="校正実行").click()
 
             status = _wait_for_status(page, "完了 |")
@@ -131,7 +131,7 @@ class TestTextInput:
         ctx, page = _fresh_page(server_and_browser[1])
         try:
             _uncheck_llm(page)
-            page.locator("textarea[data-testid='textbox']").nth(1).fill(TEST_INPUT)
+            page.get_by_label("OCRテキスト").fill(TEST_INPUT)
             page.get_by_role("button", name="校正実行").click()
             _wait_for_status(page, "完了 |")
 
@@ -157,7 +157,7 @@ class TestTextInput:
         ctx, page = _fresh_page(server_and_browser[1])
         try:
             _uncheck_llm(page)
-            page.locator("textarea[data-testid='textbox']").nth(1).fill(TEST_INPUT)
+            page.get_by_label("OCRテキスト").fill(TEST_INPUT)
             page.get_by_role("button", name="校正実行").click()
             _wait_for_status(page, "完了 |")
 

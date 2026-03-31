@@ -210,10 +210,61 @@ def _looks_like_dialect_context(line: str, original: str, fixed: str) -> bool:
     )
 
 
+def _normalize_protected_terms(terms: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    if not terms:
+        return ()
+    return tuple(dict.fromkeys(term.strip() for term in terms if term and term.strip()))
+
+
+def _find_occurrences(text: str, needle: str) -> list[tuple[int, int]]:
+    if not text or not needle:
+        return []
+    spans: list[tuple[int, int]] = []
+    start = 0
+    while True:
+        idx = text.find(needle, start)
+        if idx < 0:
+            return spans
+        spans.append((idx, idx + len(needle)))
+        start = idx + 1
+
+
+def _overlaps(lhs: tuple[int, int], rhs: tuple[int, int]) -> bool:
+    return lhs[0] < rhs[1] and rhs[0] < lhs[1]
+
+
+def _touches_protected_term(
+    line: str,
+    original: str,
+    protected_terms: tuple[str, ...],
+) -> bool:
+    if not line or not original or not protected_terms:
+        return False
+    if original in protected_terms:
+        return True
+
+    protected_spans: list[tuple[int, int]] = []
+    for term in protected_terms:
+        protected_spans.extend(_find_occurrences(line, term))
+    if not protected_spans:
+        return False
+
+    original_spans = _find_occurrences(line, original)
+    if not original_spans:
+        return False
+
+    overlapping = [
+        span for span in original_spans
+        if any(_overlaps(span, protected_span) for protected_span in protected_spans)
+    ]
+    return bool(overlapping) and len(overlapping) == len(original_spans)
+
+
 def _guard_candidate(
     suspect: SuspectToken,
     mode: str = "general",
     line: str = "",
+    protected_terms: tuple[str, ...] = (),
 ) -> tuple[str, str] | None:
     """Block candidate types that frequently cause OCR over-correction."""
     if not suspect.candidates:
@@ -224,6 +275,9 @@ def _guard_candidate(
     fixed = top_fix.strip()
     if not original or not fixed or original == fixed:
         return None
+
+    if _touches_protected_term(line, original, protected_terms):
+        return ("proper_noun", "保護語句に含まれるため自動修正しない")
 
     if _is_punctuation_token(original) or _is_punctuation_token(fixed):
         return ("punctuation", "句読点候補は自動修正しない")
@@ -344,6 +398,7 @@ class Pipeline:
                 model=self.config.llm_model,
                 api_base=api_base,
                 mode=self.config.correction_mode,
+                protected_terms=self.config.protected_terms,
             )
 
     def run(self, text: str) -> PipelineResult:
@@ -355,6 +410,7 @@ class Pipeline:
         text = _resplit_by_punctuation(text)
         lines = text.splitlines()
         structure_issues = _detect_structure_issues(lines)
+        protected_terms = _normalize_protected_terms(self.config.protected_terms)
         timing: dict[str, float] = {}
 
         # Step 1: BERT scan
@@ -391,6 +447,7 @@ class Pipeline:
                     suspect,
                     mode=self.config.correction_mode,
                     line=line,
+                    protected_terms=protected_terms,
                 )
                 if guard is not None:
                     category, reason = guard
@@ -473,6 +530,7 @@ class Pipeline:
         text = _resplit_by_punctuation(text)
         lines = text.splitlines()
         structure_issues = _detect_structure_issues(lines)
+        protected_terms = _normalize_protected_terms(self.config.protected_terms)
         timing: dict[str, float] = {}
 
         # Step 1: BERT scan
@@ -512,6 +570,7 @@ class Pipeline:
                     suspect,
                     mode=self.config.correction_mode,
                     line=line,
+                    protected_terms=protected_terms,
                 )
                 if guard is not None:
                     category, reason = guard

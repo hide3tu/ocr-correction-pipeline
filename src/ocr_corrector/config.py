@@ -13,6 +13,7 @@ class PipelineConfig:
 
     # Correction mode
     correction_mode: str = "general"  # general, fiction
+    protected_terms: list[str] = field(default_factory=list)  # known names / terms to preserve
 
     # LLM settings (any OpenAI-compatible endpoint)
     llm_model: str = "Qwen3.5-4B-Q4_K_M.gguf"

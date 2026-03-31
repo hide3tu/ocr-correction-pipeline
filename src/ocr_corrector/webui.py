@@ -27,6 +27,13 @@ def _resolve_api_base(value: str) -> str:
     return KNOWN_ENDPOINTS.get(value, value)
 
 
+def _parse_protected_terms(value: str) -> list[str]:
+    if not value:
+        return []
+    raw = value.replace("、", "\n").replace(",", "\n")
+    return [term.strip() for term in raw.splitlines() if term.strip()]
+
+
 def _format_row(c, lines: list[str]) -> list[Any]:
     line_text = ""
     if c.suspect.line_index < len(lines):
@@ -55,6 +62,7 @@ def _run_pipeline_streaming(
     image,
     bert_model: str,
     correction_mode: str,
+    protected_terms_text: str,
     llm_model: str,
     llm_enabled: bool,
     llm_api: str,
@@ -112,6 +120,7 @@ def _run_pipeline_streaming(
     config = PipelineConfig(
         bert_model=bert_model_name,
         correction_mode=correction_mode,
+        protected_terms=_parse_protected_terms(protected_terms_text),
         llm_model=llm_model,
         llm_enabled=llm_enabled,
         llm_api_base=_resolve_api_base(llm_api),
@@ -191,6 +200,7 @@ def _run_multi_image_streaming(
     images,
     bert_model: str,
     correction_mode: str,
+    protected_terms_text: str,
     llm_model: str,
     llm_enabled: bool,
     llm_api: str,
@@ -244,6 +254,7 @@ def _run_multi_image_streaming(
     config = PipelineConfig(
         bert_model=bert_model_name,
         correction_mode=correction_mode,
+        protected_terms=_parse_protected_terms(protected_terms_text),
         llm_model=llm_model,
         llm_enabled=llm_enabled,
         llm_api_base=_resolve_api_base(llm_api),
@@ -376,6 +387,12 @@ def create_app():
                     label="校正モード",
                     info="硬い文書は general、小説や会話文は fiction",
                 )
+                protected_terms = gr.Textbox(
+                    lines=4,
+                    label="保護語句",
+                    placeholder="キャラ名・地名・作中用語を1行1語で入力",
+                    info="ここに入れた語句を含む候補は固有名詞扱いで自動修正しない",
+                )
                 llm_model = gr.Dropdown(
                     choices=gguf_models or [default_model],
                     value=default_model,
@@ -469,7 +486,7 @@ def create_app():
             fn=_run_pipeline_streaming,
             inputs=[
                 text_input, image_input,
-                bert_model, correction_mode, llm_model, llm_enabled, llm_api,
+                bert_model, correction_mode, protected_terms, llm_model, llm_enabled, llm_api,
                 gpu_mode, bert_threshold, min_candidate_prob, escalation_threshold,
             ],
             outputs=[results_table, timing_text, status_text, ocr_output, run_btn_text, download_files],
@@ -481,7 +498,7 @@ def create_app():
             fn=_run_pipeline_streaming,
             inputs=[
                 text_input, image_input,
-                bert_model, correction_mode, llm_model, llm_enabled, llm_api,
+                bert_model, correction_mode, protected_terms, llm_model, llm_enabled, llm_api,
                 gpu_mode, bert_threshold, min_candidate_prob, escalation_threshold,
             ],
             outputs=[results_table, timing_text, status_text, ocr_output, run_btn_image, download_files],
@@ -493,7 +510,7 @@ def create_app():
             fn=_run_multi_image_streaming,
             inputs=[
                 multi_image_input,
-                bert_model, correction_mode, llm_model, llm_enabled, llm_api,
+                bert_model, correction_mode, protected_terms, llm_model, llm_enabled, llm_api,
                 gpu_mode, bert_threshold, min_candidate_prob, escalation_threshold,
             ],
             outputs=[results_table, timing_text, status_text, ocr_output, run_btn_multi, download_files],

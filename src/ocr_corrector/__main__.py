@@ -94,6 +94,16 @@ def _is_text_file(path: str) -> bool:
     return ext in TEXT_EXTENSIONS
 
 
+def _load_protected_terms(inline_terms: list[str] | None, terms_file: str | None) -> list[str]:
+    terms = [term.strip() for term in (inline_terms or []) if term.strip()]
+    if terms_file:
+        path = Path(terms_file)
+        text = path.read_text(encoding="utf-8")
+        text = text.replace("、", "\n").replace(",", "\n")
+        terms.extend(term.strip() for term in text.splitlines() if term.strip())
+    return list(dict.fromkeys(terms))
+
+
 def _ocr_files(paths: list[str]) -> tuple[str, str, list]:
     """OCR one or more image files. Returns (combined_text, ocr_text, pages)."""
     from .ocr_frontend import ocr_image_with_layout
@@ -182,6 +192,15 @@ def main():
         default=0.30,
         help="Minimum BERT top1 candidate probability to show (default: 0.30)",
     )
+    parser.add_argument(
+        "--protected-term",
+        action="append",
+        help="Known name/term to protect from auto-correction (repeatable)",
+    )
+    parser.add_argument(
+        "--protected-terms-file",
+        help="UTF-8 text file containing protected terms (one per line)",
+    )
     parser.add_argument("--webui", action="store_true", help="Launch Gradio WebUI")
     parser.add_argument("--port", type=int, default=7860, help="WebUI server port (default: 7860)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
@@ -209,6 +228,7 @@ def main():
     config = PipelineConfig(
         bert_model=args.bert_model,
         correction_mode=args.mode,
+        protected_terms=_load_protected_terms(args.protected_term, args.protected_terms_file),
         llm_model=args.llm_model,
         llm_enabled=not args.no_llm,
         llm_api_base=_resolve_api_base(args.llm_api),
