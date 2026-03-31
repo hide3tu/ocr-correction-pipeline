@@ -55,6 +55,9 @@ def _print_results(result, use_color: bool = True):
             f"{', LLM: ' + c.qwen_verdict if c.qwen_verdict else ''}"
             f"){end}"
         )
+        if c.category or c.reason:
+            meta = " / ".join(x for x in [c.category, c.reason] if x)
+            print(f"  {meta}")
         if line_text:
             print(f"  {line_text}")
         print()

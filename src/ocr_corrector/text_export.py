@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-from .escalation import CorrectionResult
+from .escalation import CorrectionResult, Verdict
 
 
 def apply_corrections(
@@ -70,7 +70,7 @@ def build_csv(corrections: list[CorrectionResult], lines: list[str]) -> str:
     """Build CSV content from correction results."""
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["行", "元", "修正候補", "BERT確率", "LLM判定", "最終判定", "行テキスト"])
+    writer.writerow(["行", "元", "修正候補", "BERT確率", "LLM判定", "最終判定", "行テキスト", "カテゴリ", "理由"])
     for c in corrections:
         line_text = ""
         if c.suspect.line_index < len(lines):
@@ -83,6 +83,8 @@ def build_csv(corrections: list[CorrectionResult], lines: list[str]) -> str:
             c.qwen_verdict or "-",
             c.verdict.value,
             line_text,
+            c.category or "-",
+            c.reason or "-",
         ])
     return buf.getvalue()
 
@@ -102,8 +104,8 @@ def generate_downloads(
       - ocr_raw.txt          : Raw OCR output (only if image input)
       - corrections.csv      : Correction results table
       - corrected_bert.txt   : BERT auto-fix applied (prob >= autofix_threshold)
-      - corrected_llm.txt    : LLM-approved corrections only (if LLM enabled)
-      - corrected_all.txt    : BERT OR LLM corrections (if LLM enabled)
+      - corrected_llm.txt    : LLM-approved AUTO-FIX corrections only (if LLM enabled)
+      - corrected_all.txt    : Final AUTO-FIX corrections only (if LLM enabled)
       - searchable.pdf       : Image + transparent text PDF (if pages provided)
     """
     tmpdir = Path(tempfile.mkdtemp(prefix="ocr_correction_"))
@@ -134,7 +136,7 @@ def generate_downloads(
         # 4. LLM-approved corrections only
         llm_text = apply_corrections(
             original_text, resplit_lines, corrections,
-            filter_fn=lambda c: c.qwen_verdict == "FIX",
+            filter_fn=lambda c: c.qwen_verdict == "FIX" and c.verdict == Verdict.AUTO_FIX,
         )
         p = tmpdir / "corrected_llm.txt"
         p.write_text(llm_text, encoding="utf-8")
@@ -143,9 +145,7 @@ def generate_downloads(
         # 5. All corrections: BERT auto-fix OR LLM FIX
         all_text = apply_corrections(
             original_text, resplit_lines, corrections,
-            filter_fn=lambda c: (
-                c.suggested_prob >= autofix_threshold or c.qwen_verdict == "FIX"
-            ),
+            filter_fn=lambda c: c.verdict == Verdict.AUTO_FIX,
         )
         p = tmpdir / "corrected_all.txt"
         p.write_text(all_text, encoding="utf-8")
@@ -157,7 +157,7 @@ def generate_downloads(
 
         # Use the most complete corrected text for PDF
         all_filter = (
-            (lambda c: c.suggested_prob >= autofix_threshold or c.qwen_verdict == "FIX")
+            (lambda c: c.verdict == Verdict.AUTO_FIX)
             if llm_enabled
             else (lambda c: c.suggested_prob >= autofix_threshold)
         )

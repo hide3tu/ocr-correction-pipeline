@@ -41,6 +41,8 @@ def _format_row(c, lines: list[str]) -> list[Any]:
         c.qwen_verdict or "-",
         c.verdict.value,
         line_text,
+        c.category or "-",
+        c.reason or "-",
     ]
 
 
@@ -412,8 +414,8 @@ def create_app():
                 )
 
                 results_table = gr.Dataframe(
-                    headers=["行", "元", "修正候補", "BERT確率", "LLM", "判定", "行テキスト"],
-                    datatype=["number", "str", "str", "str", "str", "str", "str"],
+                    headers=["行", "元", "修正候補", "BERT確率", "LLM", "判定", "行テキスト", "カテゴリ", "理由"],
+                    datatype=["number", "str", "str", "str", "str", "str", "str", "str", "str"],
                     label="校正結果",
                     wrap=True,
                 )
@@ -424,8 +426,8 @@ def create_app():
                 gr.Markdown(
                     "*OCR原文 / 校正結果CSV / BERT校正テキスト"
                     "（確信度≥70%を適用） / LLM校正テキスト"
-                    "（LLM承認のみ適用） / 全校正テキスト"
-                    "（BERT∪LLM）*"
+                    "（LLM承認のAUTO-FIXのみ適用） / 全校正テキスト"
+                    "（最終AUTO-FIXのみ適用）*"
                 )
                 download_files = gr.File(
                     label="校正結果ファイル",

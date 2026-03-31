@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .bert_scanner import SuspectToken
+from .qwen_judge import JudgeResult
+
+SAFE_CATEGORIES = {"ocr_typo", "grammar"}
+PROTECTED_CATEGORIES = {"punctuation", "proper_noun", "dialect", "paraphrase", "unclear"}
 
 
 class Verdict(str, Enum):
@@ -23,19 +27,52 @@ class CorrectionResult:
     suggested_fix: str  # top1 candidate from BERT
     suggested_prob: float
     qwen_verdict: str | None  # "FIX", "KEEP", or None if Qwen disabled
+    category: str | None = None
+    reason: str | None = None
+
+
+def classify_guarded_candidate(
+    suspect: SuspectToken,
+    category: str,
+    reason: str,
+) -> CorrectionResult:
+    """Return an AUTO-KEEP result for candidates blocked by local guardrails."""
+    top_candidate, top_prob = suspect.candidates[0]
+
+    return CorrectionResult(
+        suspect=suspect,
+        verdict=Verdict.AUTO_KEEP,
+        suggested_fix=top_candidate,
+        suggested_prob=top_prob,
+        qwen_verdict="KEEP",
+        category=category,
+        reason=reason,
+    )
+
+
+def _coerce_judge_result(value: JudgeResult | str) -> JudgeResult:
+    if isinstance(value, JudgeResult):
+        return value
+    verdict = "FIX" if str(value).upper() == "FIX" else "KEEP"
+    return JudgeResult(verdict=verdict)
 
 
 def classify_with_qwen(
     suspect: SuspectToken,
-    qwen_verdict: str,
+    qwen_verdict: JudgeResult | str,
     escalation_threshold: float = 0.50,
 ) -> CorrectionResult:
     """Classify a suspect token when Qwen is enabled."""
     top_candidate, top_prob = suspect.candidates[0]
+    judge = _coerce_judge_result(qwen_verdict)
+    category = judge.category or "unclear"
+    reason = judge.reason or None
 
-    if qwen_verdict == "FIX":
+    if judge.verdict == "FIX" and category in PROTECTED_CATEGORIES:
+        verdict = Verdict.ESCALATE
+    elif judge.verdict == "FIX":
         verdict = Verdict.AUTO_FIX
-    elif top_prob >= escalation_threshold:
+    elif top_prob >= escalation_threshold and category in SAFE_CATEGORIES:
         verdict = Verdict.ESCALATE
     else:
         verdict = Verdict.AUTO_KEEP
@@ -45,7 +82,9 @@ def classify_with_qwen(
         verdict=verdict,
         suggested_fix=top_candidate,
         suggested_prob=top_prob,
-        qwen_verdict=qwen_verdict,
+        qwen_verdict=judge.verdict,
+        category=category,
+        reason=reason,
     )
 
 
@@ -70,4 +109,6 @@ def classify_without_qwen(
         suggested_fix=top_candidate,
         suggested_prob=top_prob,
         qwen_verdict=None,
+        category=None,
+        reason=None,
     )

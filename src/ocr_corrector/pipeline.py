@@ -10,6 +10,7 @@ from .bert_scanner import BertScanner, SuspectToken
 from .config import PipelineConfig
 from .escalation import (
     CorrectionResult,
+    classify_guarded_candidate,
     classify_with_qwen,
     classify_without_qwen,
 )
@@ -18,6 +19,7 @@ from .llm_server import LlmServerProcess, find_model, find_server_bin, is_server
 from .qwen_judge import LlmJudge
 
 logger = logging.getLogger(__name__)
+PUNCTUATION_CHARS = set("、。,.，．！？!?：:；;・…‥ー―-「」『』（）()［］【】〔〕〈〉《》")
 
 
 @dataclass
@@ -87,6 +89,40 @@ def _get_context(lines: list[str], line_idx: int, window: int = 2) -> str:
     start = max(0, line_idx - window)
     end = min(len(lines), line_idx + window + 1)
     return "\n".join(lines[start:end])
+
+
+def _is_punctuation_token(token: str) -> bool:
+    stripped = token.strip()
+    return bool(stripped) and all(ch in PUNCTUATION_CHARS for ch in stripped)
+
+
+def _guard_candidate(suspect: SuspectToken) -> tuple[str, str] | None:
+    """Block candidate types that frequently cause OCR over-correction."""
+    if not suspect.candidates:
+        return None
+
+    top_fix, _ = suspect.candidates[0]
+    original = suspect.original.strip()
+    fixed = top_fix.strip()
+    if not original or not fixed or original == fixed:
+        return None
+
+    if _is_punctuation_token(original) or _is_punctuation_token(fixed):
+        return ("punctuation", "句読点候補は自動修正しない")
+
+    compact_original = "".join(original.split())
+    compact_fixed = "".join(fixed.split())
+    if (
+        len(compact_fixed) >= len(compact_original) + 2
+        and (
+            compact_original in compact_fixed
+            or compact_fixed.startswith(compact_original)
+            or compact_fixed.endswith(compact_original)
+        )
+    ):
+        return ("paraphrase", "語彙の追加・言い換え候補")
+
+    return None
 
 
 class Pipeline:
@@ -175,14 +211,24 @@ class Pipeline:
         t0 = time.perf_counter()
 
         for suspect in filtered:
-            if self.config.llm_enabled and self._judge is not None:
+            guard = _guard_candidate(suspect)
+            if guard is not None:
+                category, reason = guard
+                result = classify_guarded_candidate(suspect, category, reason)
+            elif self.config.llm_enabled and self._judge is not None:
                 # Build A/B lines for Qwen
                 line = lines[suspect.line_index] if suspect.line_index < len(lines) else ""
                 top_fix = suspect.candidates[0][0] if suspect.candidates else ""
                 fixed_line = _build_fixed_line(line, suspect, top_fix)
                 context = _get_context(lines, suspect.line_index)
 
-                qwen_verdict = self._judge.judge(line, fixed_line, context)
+                qwen_verdict = self._judge.judge_with_details(
+                    original_line=line,
+                    fixed_line=fixed_line,
+                    original_token=suspect.original,
+                    fixed_token=top_fix,
+                    context=context,
+                )
                 result = classify_with_qwen(
                     suspect, qwen_verdict,
                     escalation_threshold=self.config.escalation_threshold,
@@ -251,13 +297,23 @@ class Pipeline:
         t0 = time.perf_counter()
 
         for i, suspect in enumerate(filtered):
-            if self.config.llm_enabled and self._judge is not None:
+            guard = _guard_candidate(suspect)
+            if guard is not None:
+                category, reason = guard
+                result = classify_guarded_candidate(suspect, category, reason)
+            elif self.config.llm_enabled and self._judge is not None:
                 line = lines[suspect.line_index] if suspect.line_index < len(lines) else ""
                 top_fix = suspect.candidates[0][0] if suspect.candidates else ""
                 fixed_line = _build_fixed_line(line, suspect, top_fix)
                 context = _get_context(lines, suspect.line_index)
 
-                qwen_verdict = self._judge.judge(line, fixed_line, context)
+                qwen_verdict = self._judge.judge_with_details(
+                    original_line=line,
+                    fixed_line=fixed_line,
+                    original_token=suspect.original,
+                    fixed_token=top_fix,
+                    context=context,
+                )
                 result = classify_with_qwen(
                     suspect, qwen_verdict,
                     escalation_threshold=self.config.escalation_threshold,
