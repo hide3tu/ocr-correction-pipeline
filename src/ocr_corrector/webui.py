@@ -46,6 +46,10 @@ def _format_row(c, lines: list[str]) -> list[Any]:
     ]
 
 
+def _is_visible_result(c) -> bool:
+    return c.verdict in {Verdict.AUTO_FIX, Verdict.ESCALATE}
+
+
 def _run_pipeline_streaming(
     text: str,
     image,
@@ -56,6 +60,7 @@ def _run_pipeline_streaming(
     llm_api: str,
     gpu_mode: str,
     bert_threshold: float,
+    min_candidate_prob: float,
     escalation_threshold: float,
 ):
     """Run pipeline, yielding (table, timing, status, ocr_output, btn, files) at each stage."""
@@ -112,6 +117,7 @@ def _run_pipeline_streaming(
         llm_api_base=_resolve_api_base(llm_api),
         gpu_mode=gpu_mode,
         bert_threshold=bert_threshold,
+        min_candidate_prob=min_candidate_prob,
         escalation_threshold=escalation_threshold,
     )
 
@@ -137,12 +143,13 @@ def _run_pipeline_streaming(
                 i = data["index"]
                 total = data["total"]
                 result = data["result"]
-                rows.append(_format_row(result, lines))
+                if _is_visible_result(result):
+                    rows.append(_format_row(result, lines))
                 yield list(rows), timing_str, f"LLM判定中: {i+1}/{total}...", ocr_display, btn_busy, None
 
             elif stage == "done":
                 final = data
-                table_data = [_format_row(c, final.lines) for c in final.corrections]
+                table_data = [_format_row(c, final.lines) for c in final.corrections if _is_visible_result(c)]
                 parts = []
                 for k, v in final.timing.items():
                     label = {"bert_scan": "BERTスキャン", "llm_judge": "LLM判定"}.get(k, k)
@@ -153,9 +160,11 @@ def _run_pipeline_streaming(
                 n_fix = sum(1 for c in final.corrections if c.verdict == Verdict.AUTO_FIX)
                 n_esc = sum(1 for c in final.corrections if c.verdict == Verdict.ESCALATE)
                 n_keep = sum(1 for c in final.corrections if c.verdict == Verdict.AUTO_KEEP)
+                n_visible = len(table_data)
                 status = (
                     f"完了 | 検出: {final.raw_suspects}箇所 → "
                     f"フィルタ後: {final.filtered_suspects}箇所 | "
+                    f"表示: {n_visible} | "
                     f"AUTO-FIX: {n_fix} | ESCALATE: {n_esc} | AUTO-KEEP: {n_keep}"
                 )
 
@@ -187,6 +196,7 @@ def _run_multi_image_streaming(
     llm_api: str,
     gpu_mode: str,
     bert_threshold: float,
+    min_candidate_prob: float,
     escalation_threshold: float,
 ):
     """Run pipeline on multiple images, yielding (table, timing, status, ocr_output, btn, files)."""
@@ -239,6 +249,7 @@ def _run_multi_image_streaming(
         llm_api_base=_resolve_api_base(llm_api),
         gpu_mode=gpu_mode,
         bert_threshold=bert_threshold,
+        min_candidate_prob=min_candidate_prob,
         escalation_threshold=escalation_threshold,
     )
 
@@ -264,12 +275,13 @@ def _run_multi_image_streaming(
                 i = data["index"]
                 total = data["total"]
                 result = data["result"]
-                rows.append(_format_row(result, lines))
+                if _is_visible_result(result):
+                    rows.append(_format_row(result, lines))
                 yield list(rows), timing_str, f"LLM判定中: {i+1}/{total}...", ocr_display, btn_busy, None
 
             elif stage == "done":
                 final = data
-                table_data = [_format_row(c, final.lines) for c in final.corrections]
+                table_data = [_format_row(c, final.lines) for c in final.corrections if _is_visible_result(c)]
                 parts = []
                 for k, v in final.timing.items():
                     label = {"bert_scan": "BERTスキャン", "llm_judge": "LLM判定"}.get(k, k)
@@ -280,9 +292,11 @@ def _run_multi_image_streaming(
                 n_fix = sum(1 for c in final.corrections if c.verdict == Verdict.AUTO_FIX)
                 n_esc = sum(1 for c in final.corrections if c.verdict == Verdict.ESCALATE)
                 n_keep = sum(1 for c in final.corrections if c.verdict == Verdict.AUTO_KEEP)
+                n_visible = len(table_data)
                 status = (
                     f"完了 ({total_images}画像) | 検出: {final.raw_suspects}箇所 → "
                     f"フィルタ後: {final.filtered_suspects}箇所 | "
+                    f"表示: {n_visible} | "
                     f"AUTO-FIX: {n_fix} | ESCALATE: {n_esc} | AUTO-KEEP: {n_keep}"
                 )
 
@@ -384,6 +398,11 @@ def create_app():
                     label="BERT閾値",
                     info="この確率未満のトークンを検出",
                 )
+                min_candidate_prob = gr.Slider(
+                    minimum=0.10, maximum=0.95, value=0.30, step=0.05,
+                    label="候補表示閾値",
+                    info="BERT修正候補の確率がこの値未満なら候補表に出さない",
+                )
                 escalation_threshold = gr.Slider(
                     minimum=0.1, maximum=0.9, value=0.50, step=0.05,
                     label="エスカレーション閾値",
@@ -426,7 +445,7 @@ def create_app():
                 results_table = gr.Dataframe(
                     headers=["行", "元", "修正候補", "BERT確率", "LLM", "判定", "行テキスト", "カテゴリ", "理由"],
                     datatype=["number", "str", "str", "str", "str", "str", "str", "str", "str"],
-                    label="校正結果",
+                    label="校正結果（AUTO-FIX / ESCALATE）",
                     wrap=True,
                 )
 
@@ -437,7 +456,7 @@ def create_app():
                     "*OCR原文 / 校正結果CSV / BERT校正テキスト"
                     "（確信度≥70%を適用） / LLM校正テキスト"
                     "（LLM承認のAUTO-FIXのみ適用） / 全校正テキスト"
-                    "（最終AUTO-FIXのみ適用）*"
+                    "（最終AUTO-FIXのみ適用） / debug用の全候補CSV*"
                 )
                 download_files = gr.File(
                     label="校正結果ファイル",
@@ -451,7 +470,7 @@ def create_app():
             inputs=[
                 text_input, image_input,
                 bert_model, correction_mode, llm_model, llm_enabled, llm_api,
-                gpu_mode, bert_threshold, escalation_threshold,
+                gpu_mode, bert_threshold, min_candidate_prob, escalation_threshold,
             ],
             outputs=[results_table, timing_text, status_text, ocr_output, run_btn_text, download_files],
             concurrency_limit=1,
@@ -463,7 +482,7 @@ def create_app():
             inputs=[
                 text_input, image_input,
                 bert_model, correction_mode, llm_model, llm_enabled, llm_api,
-                gpu_mode, bert_threshold, escalation_threshold,
+                gpu_mode, bert_threshold, min_candidate_prob, escalation_threshold,
             ],
             outputs=[results_table, timing_text, status_text, ocr_output, run_btn_image, download_files],
             concurrency_limit=1,
@@ -475,7 +494,7 @@ def create_app():
             inputs=[
                 multi_image_input,
                 bert_model, correction_mode, llm_model, llm_enabled, llm_api,
-                gpu_mode, bert_threshold, escalation_threshold,
+                gpu_mode, bert_threshold, min_candidate_prob, escalation_threshold,
             ],
             outputs=[results_table, timing_text, status_text, ocr_output, run_btn_multi, download_files],
             concurrency_limit=1,

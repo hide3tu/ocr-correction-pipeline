@@ -25,7 +25,7 @@ def _setup_logging(verbose: bool):
     )
 
 
-def _print_results(result, use_color: bool = True):
+def _print_results(result, use_color: bool = True, show_auto_keep: bool = False):
     """Print pipeline results to stdout."""
     colors = {
         Verdict.AUTO_FIX: "\033[32m",   # green
@@ -39,7 +39,11 @@ def _print_results(result, use_color: bool = True):
     print(f"After filter: {result.filtered_suspects}")
     print()
 
+    hidden_auto_keep = 0
     for c in result.corrections:
+        if not show_auto_keep and c.verdict == Verdict.AUTO_KEEP:
+            hidden_auto_keep += 1
+            continue
         color = colors.get(c.verdict, "") if use_color else ""
         end = reset if use_color else ""
 
@@ -60,6 +64,10 @@ def _print_results(result, use_color: bool = True):
             print(f"  {meta}")
         if line_text:
             print(f"  {line_text}")
+        print()
+
+    if hidden_auto_keep:
+        print(f"(AUTO-KEEP {hidden_auto_keep}件は非表示。必要なら --show-auto-keep)")
         print()
 
     # Timing
@@ -168,10 +176,21 @@ def main():
         default=0.50,
         help="Escalation threshold for BERT confidence (default: 0.50)",
     )
+    parser.add_argument(
+        "--min-candidate-prob",
+        type=float,
+        default=0.30,
+        help="Minimum BERT top1 candidate probability to show (default: 0.30)",
+    )
     parser.add_argument("--webui", action="store_true", help="Launch Gradio WebUI")
     parser.add_argument("--port", type=int, default=7860, help="WebUI server port (default: 7860)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     parser.add_argument("--no-color", action="store_true", help="Disable colored output")
+    parser.add_argument(
+        "--show-auto-keep",
+        action="store_true",
+        help="Show AUTO-KEEP rows in CLI output",
+    )
 
     args = parser.parse_args()
     _setup_logging(args.verbose)
@@ -195,6 +214,7 @@ def main():
         llm_api_base=_resolve_api_base(args.llm_api),
         gpu_mode=args.gpu_mode,
         bert_threshold=args.bert_threshold,
+        min_candidate_prob=args.min_candidate_prob,
         escalation_threshold=args.escalation_threshold,
     )
 
@@ -240,7 +260,11 @@ def main():
     pipeline = Pipeline(config)
     try:
         result = pipeline.run(text)
-        _print_results(result, use_color=not args.no_color)
+        _print_results(
+            result,
+            use_color=not args.no_color,
+            show_auto_keep=args.show_auto_keep,
+        )
 
         # Save result files if --output-dir specified
         if args.output_dir:

@@ -9,10 +9,10 @@ from .bert_scanner import SuspectToken
 from .qwen_judge import JudgeResult
 
 SAFE_CATEGORIES = {"ocr_typo", "grammar"}
-PROTECTED_CATEGORIES = {"punctuation", "proper_noun", "dialect", "paraphrase", "unclear"}
+PROTECTED_CATEGORIES = {"punctuation", "semantic", "structure", "proper_noun", "dialect", "paraphrase", "unclear"}
 KEEP_ESCALATE_CATEGORIES = {
-    "general": {"ocr_typo", "grammar", "proper_noun", "dialect", "unclear"},
-    "fiction": {"ocr_typo", "grammar"},
+    "general": {"ocr_typo", "grammar", "semantic", "structure", "proper_noun", "dialect", "unclear"},
+    "fiction": {"ocr_typo", "grammar", "semantic", "structure"},
 }
 
 

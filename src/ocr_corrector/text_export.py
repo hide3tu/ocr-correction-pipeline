@@ -66,12 +66,18 @@ def apply_corrections(
     return "".join(chars)
 
 
-def build_csv(corrections: list[CorrectionResult], lines: list[str]) -> str:
+def build_csv(
+    corrections: list[CorrectionResult],
+    lines: list[str],
+    filter_fn: Callable[[CorrectionResult], bool] | None = None,
+) -> str:
     """Build CSV content from correction results."""
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["行", "元", "修正候補", "BERT確率", "LLM判定", "最終判定", "行テキスト", "カテゴリ", "理由"])
     for c in corrections:
+        if filter_fn is not None and not filter_fn(c):
+            continue
         line_text = ""
         if c.suspect.line_index < len(lines):
             line_text = lines[c.suspect.line_index].strip()
@@ -102,7 +108,8 @@ def generate_downloads(
 
     Files generated:
       - ocr_raw.txt          : Raw OCR output (only if image input)
-      - corrections.csv      : Correction results table
+      - corrections.csv      : Actionable rows only (AUTO-FIX / ESCALATE)
+      - corrections_debug.csv: Full correction table including AUTO-KEEP
       - corrected_bert.txt   : BERT auto-fix applied (prob >= autofix_threshold)
       - corrected_llm.txt    : LLM-approved AUTO-FIX corrections only (if LLM enabled)
       - corrected_all.txt    : Final AUTO-FIX corrections only (if LLM enabled)
@@ -117,13 +124,21 @@ def generate_downloads(
         p.write_text(ocr_text, encoding="utf-8")
         files.append(str(p))
 
-    # 2. Correction results CSV (BOM for Excel compatibility)
-    csv_content = build_csv(corrections, resplit_lines)
+    actionable_filter = lambda c: c.verdict in {Verdict.AUTO_FIX, Verdict.ESCALATE}
+
+    # 2. Correction results CSV (actionable only, BOM for Excel compatibility)
+    csv_content = build_csv(corrections, resplit_lines, filter_fn=actionable_filter)
     p = tmpdir / "corrections.csv"
     p.write_text("\ufeff" + csv_content, encoding="utf-8")
     files.append(str(p))
 
-    # 3. BERT auto-fix: apply where BERT confidence is high on its own
+    # 3. Full debug CSV (includes AUTO-KEEP rows)
+    debug_csv = build_csv(corrections, resplit_lines)
+    p = tmpdir / "corrections_debug.csv"
+    p.write_text("\ufeff" + debug_csv, encoding="utf-8")
+    files.append(str(p))
+
+    # 4. BERT auto-fix: apply where BERT confidence is high on its own
     bert_text = apply_corrections(
         original_text, resplit_lines, corrections,
         filter_fn=lambda c: c.suggested_prob >= autofix_threshold,
@@ -133,7 +148,7 @@ def generate_downloads(
     files.append(str(p))
 
     if llm_enabled:
-        # 4. LLM-approved corrections only
+        # 5. LLM-approved corrections only
         llm_text = apply_corrections(
             original_text, resplit_lines, corrections,
             filter_fn=lambda c: c.qwen_verdict == "FIX" and c.verdict == Verdict.AUTO_FIX,
@@ -142,7 +157,7 @@ def generate_downloads(
         p.write_text(llm_text, encoding="utf-8")
         files.append(str(p))
 
-        # 5. All corrections: BERT auto-fix OR LLM FIX
+        # 6. All corrections: BERT auto-fix OR LLM FIX
         all_text = apply_corrections(
             original_text, resplit_lines, corrections,
             filter_fn=lambda c: c.verdict == Verdict.AUTO_FIX,
@@ -151,7 +166,7 @@ def generate_downloads(
         p.write_text(all_text, encoding="utf-8")
         files.append(str(p))
 
-    # 6. Searchable PDF (only if image input with layout data)
+    # 7. Searchable PDF (only if image input with layout data)
     if pages:
         from .pdf_export import generate_searchable_pdf
 

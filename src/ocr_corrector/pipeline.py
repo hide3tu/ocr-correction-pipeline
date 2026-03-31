@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -20,6 +21,37 @@ from .qwen_judge import LlmJudge
 
 logger = logging.getLogger(__name__)
 PUNCTUATION_CHARS = set("、。,.，．！？!?：:；;・…‥ー―-「」『』（）()［］【】〔〕〈〉《》")
+SENTENCE_ENDERS = set("。！？!?")
+SOFT_ENDERS = set("、")
+CLOSING_QUOTES = set("」』）)]】〉》")
+OPEN_TO_CLOSE = {
+    "「": "」",
+    "『": "』",
+    "(": ")",
+    "（": "）",
+    "[": "]",
+    "［": "］",
+    "【": "】",
+    "〔": "〕",
+    "〈": "〉",
+    "《": "》",
+}
+CLOSE_TO_OPEN = {close: open_ for open_, close in OPEN_TO_CLOSE.items()}
+DIALECT_MARKERS = (
+    "やっとる",
+    "しとる",
+    "しとく",
+    "やん",
+    "やね",
+    "やろ",
+    "やで",
+    "やし",
+    "かて",
+    "へん",
+    "ねん",
+    "もんや",
+)
+DIALECT_ENDINGS = ("とる", "とく", "やん", "やね", "やろ", "やで", "かて", "へん", "ねん")
 
 
 @dataclass
@@ -38,12 +70,38 @@ def _resplit_by_punctuation(text: str) -> str:
 
     OCR output splits text at physical line boundaries, which breaks words
     across lines (e.g. "空\\n気" for "空気"). Re-splitting by punctuation
-    (。、) eliminates these mid-word breaks.
+    (。、！？!?) eliminates these mid-word breaks while keeping sentence
+    boundaries around dialogue.
     """
-    import re
     joined = text.replace("\n", "")
-    sentences = re.split(r"(?<=[。、])", joined)
-    return "\n".join(s for s in sentences if s.strip())
+    sentences: list[str] = []
+    buf: list[str] = []
+    i = 0
+
+    while i < len(joined):
+        ch = joined[i]
+        buf.append(ch)
+        i += 1
+
+        if ch in SENTENCE_ENDERS:
+            while i < len(joined) and joined[i] in CLOSING_QUOTES:
+                buf.append(joined[i])
+                i += 1
+            sentence = "".join(buf).strip()
+            if sentence:
+                sentences.append(sentence)
+            buf = []
+        elif ch in SOFT_ENDERS:
+            sentence = "".join(buf).strip()
+            if sentence:
+                sentences.append(sentence)
+            buf = []
+
+    tail = "".join(buf).strip()
+    if tail:
+        sentences.append(tail)
+
+    return "\n".join(sentences)
 
 
 def _filter_suspects(
@@ -91,17 +149,77 @@ def _get_context(lines: list[str], line_idx: int, window: int = 2) -> str:
     return "\n".join(lines[start:end])
 
 
+def _detect_structure_issues(lines: list[str]) -> list[str | None]:
+    """Detect bracket/quote mismatches across the whole text.
+
+    Quotes often open on one line and close on the next, so line-local detection
+    creates false positives. This scanner keeps a global stack and only flags
+    lines that truly introduce unmatched closing brackets, plus lines where an
+    opening bracket is still unmatched at end of text.
+    """
+    issues: list[str | None] = [None] * len(lines)
+    stack: list[tuple[str, int]] = []
+
+    for line_idx, line in enumerate(lines):
+        for ch in line:
+            if ch in OPEN_TO_CLOSE:
+                stack.append((ch, line_idx))
+            elif ch in CLOSE_TO_OPEN:
+                expected = CLOSE_TO_OPEN[ch]
+                if stack and stack[-1][0] == expected:
+                    stack.pop()
+                else:
+                    issues[line_idx] = "閉じ括弧の対応が崩れているため語彙修正を停止"
+
+    for open_ch, line_idx in stack:
+        if issues[line_idx] is not None:
+            continue
+        if open_ch in {"「", "『"}:
+            issues[line_idx] = "会話の開き括弧に対する閉じ括弧欠落の可能性があるため語彙修正を停止"
+        else:
+            issues[line_idx] = "括弧の対応が崩れているため語彙修正を停止"
+
+    return issues
+
+
 def _is_punctuation_token(token: str) -> bool:
     stripped = token.strip()
     return bool(stripped) and all(ch in PUNCTUATION_CHARS for ch in stripped)
 
 
-def _guard_candidate(suspect: SuspectToken) -> tuple[str, str] | None:
+def _is_hiragana_word(token: str) -> bool:
+    return bool(token) and bool(re.fullmatch(r"[ぁ-んー]+", token))
+
+
+def _is_kanji_word(token: str) -> bool:
+    return bool(token) and bool(re.fullmatch(r"[一-龠々ヶ]+", token))
+
+
+def _looks_like_dialogue(line: str) -> bool:
+    return any(marker in line for marker in ("「", "」", "『", "』", "?", "？", "!", "！"))
+
+
+def _looks_like_dialect_context(line: str, original: str, fixed: str) -> bool:
+    compact_line = "".join(line.split())
+    if any(marker in compact_line for marker in DIALECT_MARKERS):
+        return True
+    return any(
+        token.endswith(ending)
+        for token in (original, fixed)
+        for ending in DIALECT_ENDINGS
+    )
+
+
+def _guard_candidate(
+    suspect: SuspectToken,
+    mode: str = "general",
+    line: str = "",
+) -> tuple[str, str] | None:
     """Block candidate types that frequently cause OCR over-correction."""
     if not suspect.candidates:
         return None
 
-    top_fix, _ = suspect.candidates[0]
+    top_fix, top_prob = suspect.candidates[0]
     original = suspect.original.strip()
     fixed = top_fix.strip()
     if not original or not fixed or original == fixed:
@@ -121,6 +239,53 @@ def _guard_candidate(suspect: SuspectToken) -> tuple[str, str] | None:
         )
     ):
         return ("paraphrase", "語彙の追加・言い換え候補")
+
+    shared_chars = set(compact_original) & set(compact_fixed)
+    if (
+        mode == "fiction"
+        and (
+            _looks_like_dialogue(line)
+            or _looks_like_dialect_context(line, compact_original, compact_fixed)
+        )
+        and _is_hiragana_word(compact_original)
+        and _is_hiragana_word(compact_fixed)
+    ):
+        return ("dialect", "会話文・口語・方言候補")
+
+    if (
+        _is_kanji_word(compact_original)
+        and _is_kanji_word(compact_fixed)
+        and len(compact_original) == 1
+        and len(compact_fixed) == 1
+        and not shared_chars
+        and top_prob < 0.90
+    ):
+        return ("semantic", "単漢字の内容語置換候補")
+
+    if (
+        not shared_chars
+        and (
+            len(compact_original) >= 2
+            or len(compact_fixed) >= 2
+        )
+    ):
+        return ("semantic", "意味差が大きい内容語置換候補")
+
+    if (
+        mode == "fiction"
+        and _is_hiragana_word(compact_original)
+        and len(compact_original) >= 2
+        and not shared_chars
+    ):
+        return ("dialect", "口語・かな語の置換候補")
+
+    if (
+        len(compact_original) >= 2
+        and len(compact_fixed) >= 2
+        and not shared_chars
+        and abs(len(compact_fixed) - len(compact_original)) >= 1
+    ):
+        return ("unclear", "語形差が大きすぎる候補")
 
     return None
 
@@ -189,6 +354,7 @@ class Pipeline:
         # Pre-process: re-split by punctuation to eliminate line-break artifacts
         text = _resplit_by_punctuation(text)
         lines = text.splitlines()
+        structure_issues = _detect_structure_issues(lines)
         timing: dict[str, float] = {}
 
         # Step 1: BERT scan
@@ -212,35 +378,68 @@ class Pipeline:
         t0 = time.perf_counter()
 
         for suspect in filtered:
-            guard = _guard_candidate(suspect)
-            if guard is not None:
-                category, reason = guard
-                result = classify_guarded_candidate(suspect, category, reason)
-            elif self.config.llm_enabled and self._judge is not None:
-                # Build A/B lines for Qwen
-                line = lines[suspect.line_index] if suspect.line_index < len(lines) else ""
-                top_fix = suspect.candidates[0][0] if suspect.candidates else ""
-                fixed_line = _build_fixed_line(line, suspect, top_fix)
-                context = _get_context(lines, suspect.line_index)
-
-                qwen_verdict = self._judge.judge_with_details(
-                    original_line=line,
-                    fixed_line=fixed_line,
-                    original_token=suspect.original,
-                    fixed_token=top_fix,
-                    context=context,
-                )
-                result = classify_with_qwen(
-                    suspect, qwen_verdict,
-                    escalation_threshold=self.config.escalation_threshold,
-                    mode=self.config.correction_mode,
-                )
+            line = lines[suspect.line_index] if suspect.line_index < len(lines) else ""
+            structure_issue = (
+                structure_issues[suspect.line_index]
+                if suspect.line_index < len(structure_issues)
+                else None
+            )
+            if structure_issue is not None:
+                result = classify_guarded_candidate(suspect, "structure", structure_issue)
             else:
-                result = classify_without_qwen(
+                guard = _guard_candidate(
                     suspect,
-                    autofix_threshold=self.config.autofix_threshold,
-                    escalation_threshold=self.config.min_candidate_prob,
+                    mode=self.config.correction_mode,
+                    line=line,
                 )
+                if guard is not None:
+                    category, reason = guard
+                    result = classify_guarded_candidate(suspect, category, reason)
+                elif self.config.llm_enabled and self._judge is not None:
+                    # Build A/B lines for Qwen
+                    top_fix = suspect.candidates[0][0] if suspect.candidates else ""
+                    fixed_line = _build_fixed_line(line, suspect, top_fix)
+                    context = _get_context(lines, suspect.line_index)
+
+                    qwen_verdict = self._judge.judge_with_details(
+                        original_line=line,
+                        fixed_line=fixed_line,
+                        original_token=suspect.original,
+                        fixed_token=top_fix,
+                        context=context,
+                    )
+                    if qwen_verdict.verdict == "FIX":
+                        semantic_check = self._judge.semantic_check(
+                            original_line=line,
+                            fixed_line=fixed_line,
+                            original_token=suspect.original,
+                            fixed_token=top_fix,
+                            context=context,
+                        )
+                        if semantic_check.verdict == "DIFF":
+                            result = classify_guarded_candidate(
+                                suspect,
+                                "semantic",
+                                semantic_check.reason or "意味保持チェックで差分あり",
+                            )
+                        else:
+                            result = classify_with_qwen(
+                                suspect, qwen_verdict,
+                                escalation_threshold=self.config.escalation_threshold,
+                                mode=self.config.correction_mode,
+                            )
+                    else:
+                        result = classify_with_qwen(
+                            suspect, qwen_verdict,
+                            escalation_threshold=self.config.escalation_threshold,
+                            mode=self.config.correction_mode,
+                        )
+                else:
+                    result = classify_without_qwen(
+                        suspect,
+                        autofix_threshold=self.config.autofix_threshold,
+                        escalation_threshold=self.config.min_candidate_prob,
+                    )
             corrections.append(result)
 
         timing["qwen_judge"] = time.perf_counter() - t0
@@ -273,6 +472,7 @@ class Pipeline:
 
         text = _resplit_by_punctuation(text)
         lines = text.splitlines()
+        structure_issues = _detect_structure_issues(lines)
         timing: dict[str, float] = {}
 
         # Step 1: BERT scan
@@ -299,34 +499,67 @@ class Pipeline:
         t0 = time.perf_counter()
 
         for i, suspect in enumerate(filtered):
-            guard = _guard_candidate(suspect)
-            if guard is not None:
-                category, reason = guard
-                result = classify_guarded_candidate(suspect, category, reason)
-            elif self.config.llm_enabled and self._judge is not None:
-                line = lines[suspect.line_index] if suspect.line_index < len(lines) else ""
-                top_fix = suspect.candidates[0][0] if suspect.candidates else ""
-                fixed_line = _build_fixed_line(line, suspect, top_fix)
-                context = _get_context(lines, suspect.line_index)
-
-                qwen_verdict = self._judge.judge_with_details(
-                    original_line=line,
-                    fixed_line=fixed_line,
-                    original_token=suspect.original,
-                    fixed_token=top_fix,
-                    context=context,
-                )
-                result = classify_with_qwen(
-                    suspect, qwen_verdict,
-                    escalation_threshold=self.config.escalation_threshold,
-                    mode=self.config.correction_mode,
-                )
+            line = lines[suspect.line_index] if suspect.line_index < len(lines) else ""
+            structure_issue = (
+                structure_issues[suspect.line_index]
+                if suspect.line_index < len(structure_issues)
+                else None
+            )
+            if structure_issue is not None:
+                result = classify_guarded_candidate(suspect, "structure", structure_issue)
             else:
-                result = classify_without_qwen(
+                guard = _guard_candidate(
                     suspect,
-                    autofix_threshold=self.config.autofix_threshold,
-                    escalation_threshold=self.config.min_candidate_prob,
+                    mode=self.config.correction_mode,
+                    line=line,
                 )
+                if guard is not None:
+                    category, reason = guard
+                    result = classify_guarded_candidate(suspect, category, reason)
+                elif self.config.llm_enabled and self._judge is not None:
+                    top_fix = suspect.candidates[0][0] if suspect.candidates else ""
+                    fixed_line = _build_fixed_line(line, suspect, top_fix)
+                    context = _get_context(lines, suspect.line_index)
+
+                    qwen_verdict = self._judge.judge_with_details(
+                        original_line=line,
+                        fixed_line=fixed_line,
+                        original_token=suspect.original,
+                        fixed_token=top_fix,
+                        context=context,
+                    )
+                    if qwen_verdict.verdict == "FIX":
+                        semantic_check = self._judge.semantic_check(
+                            original_line=line,
+                            fixed_line=fixed_line,
+                            original_token=suspect.original,
+                            fixed_token=top_fix,
+                            context=context,
+                        )
+                        if semantic_check.verdict == "DIFF":
+                            result = classify_guarded_candidate(
+                                suspect,
+                                "semantic",
+                                semantic_check.reason or "意味保持チェックで差分あり",
+                            )
+                        else:
+                            result = classify_with_qwen(
+                                suspect, qwen_verdict,
+                                escalation_threshold=self.config.escalation_threshold,
+                                mode=self.config.correction_mode,
+                            )
+                    else:
+                        result = classify_with_qwen(
+                            suspect, qwen_verdict,
+                            escalation_threshold=self.config.escalation_threshold,
+                            mode=self.config.correction_mode,
+                        )
+                else:
+                    result = classify_without_qwen(
+                        suspect,
+                        autofix_threshold=self.config.autofix_threshold,
+                        escalation_threshold=self.config.min_candidate_prob,
+                    )
             corrections.append(result)
             yield "llm", {"index": i, "total": len(filtered), "result": result}
 

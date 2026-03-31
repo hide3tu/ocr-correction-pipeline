@@ -22,6 +22,8 @@ ALLOWED_CATEGORIES = {
     "ocr_typo",
     "grammar",
     "punctuation",
+    "semantic",
+    "structure",
     "proper_noun",
     "dialect",
     "paraphrase",
@@ -51,6 +53,14 @@ class JudgeResult:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class SemanticCheckResult:
+    """Whether the candidate preserves the original meaning."""
+
+    verdict: str
+    reason: str = ""
+
+
 JUDGE_PROMPT = """あなたはOCR校正の判定器です。
 目的はOCR誤認識だけを直すことです。文章改善や言い換えは禁止です。
 
@@ -71,6 +81,8 @@ categoryは次のいずれかを使う:
 - ocr_typo
 - grammar
 - punctuation
+- semantic
+- structure
 - proper_noun
 - dialect
 - paraphrase
@@ -78,6 +90,26 @@ categoryは次のいずれかを使う:
 
 JSONのみで答えてください。
 {{"verdict":"FIX|KEEP","category":"ocr_typo|grammar|punctuation|proper_noun|dialect|paraphrase|unclear","reason":"短く"}}
+
+文脈:
+{context}
+
+怪しい元トークン: {original_token}
+修正候補: {fixed_token}
+
+A: {line_a}
+B: {line_b}"""
+
+SEMANTIC_CHECK_PROMPT = """あなたはOCR校正の後検査器です。
+Aは原文、Bは修正候補適用後の文です。
+
+判定基準:
+- BがAの意味・状況・主語/対象・場所・時制を保ったまま、OCR誤認識だけ直しているなら SAME
+- Bが意味を変える、情報を足す/削る、言い換える、慣用句や口語表現を壊すなら DIFF
+- 不確実なら DIFF
+
+JSONのみで答えてください。
+{{"verdict":"SAME|DIFF","reason":"短く"}}
 
 文脈:
 {context}
@@ -196,6 +228,49 @@ class LlmJudge:
             logger.exception("LLM judgment failed, defaulting to KEEP")
             return JudgeResult("KEEP", "unclear", "LLM判定失敗")
 
+    def semantic_check(
+        self,
+        original_line: str,
+        fixed_line: str,
+        original_token: str = "",
+        fixed_token: str = "",
+        context: str = "",
+    ) -> SemanticCheckResult:
+        """Check whether the candidate preserves the original meaning."""
+        prompt = SEMANTIC_CHECK_PROMPT.format(
+            context=context or "(なし)",
+            original_token=original_token or "(不明)",
+            fixed_token=fixed_token or "(不明)",
+            line_a=original_line,
+            line_b=fixed_line,
+        )
+
+        payload = json.dumps({
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+            "max_tokens": 64,
+            "enable_thinking": False,
+        }).encode("utf-8")
+
+        url = f"{self.api_base}/chat/completions"
+        req = Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read())
+                answer = data["choices"][0]["message"]["content"].strip()
+                logger.debug("LLM semantic response: %s", answer)
+                return _parse_semantic_check_response(answer)
+        except Exception:
+            logger.exception("LLM semantic check failed, defaulting to DIFF")
+            return SemanticCheckResult("DIFF", "意味保持判定失敗")
+
     def cleanup(self):
         """No-op for HTTP-based client."""
         pass
@@ -228,3 +303,29 @@ def _parse_judge_response(answer: str) -> JudgeResult:
     if "FIX" in payload.upper():
         return JudgeResult("FIX", "unclear", "非JSON応答")
     return JudgeResult("KEEP", "unclear", "非JSON応答")
+
+
+def _parse_semantic_check_response(answer: str) -> SemanticCheckResult:
+    """Parse a model response into a normalized SemanticCheckResult."""
+    payload = answer.strip()
+    if not payload:
+        return SemanticCheckResult("DIFF", "空応答")
+
+    candidates = [payload]
+    match = re.search(r"\{.*\}", payload, re.DOTALL)
+    if match:
+        candidates.insert(0, match.group(0))
+
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+
+        verdict = "SAME" if str(data.get("verdict", "")).upper() == "SAME" else "DIFF"
+        reason = str(data.get("reason", "")).strip()
+        return SemanticCheckResult(verdict=verdict, reason=reason)
+
+    if "SAME" in payload.upper():
+        return SemanticCheckResult("SAME", "非JSON応答")
+    return SemanticCheckResult("DIFF", "非JSON応答")
