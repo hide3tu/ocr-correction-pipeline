@@ -28,6 +28,19 @@ ALLOWED_CATEGORIES = {
     "unclear",
 }
 
+MODE_RULES = {
+    "general": """モード: general
+- 硬い文体や説明文も対象とする
+- 明確なOCR誤りなら修正してよい
+- ただし、句読点だけの調整・言い換え・情報追加は禁止
+- 固有名詞や専門用語は不確実ならKEEP""",
+    "fiction": """モード: fiction
+- 小説、会話文、地の文、方言、口語を対象とする
+- 方言、口調、語尾、会話の癖は原則KEEP
+- 固有名詞、作中用語、呼称は原則KEEP
+- 句読点や会話記号の変更は原則KEEP""",
+}
+
 
 @dataclass(frozen=True)
 class JudgeResult:
@@ -40,6 +53,8 @@ class JudgeResult:
 
 JUDGE_PROMPT = """あなたはOCR校正の判定器です。
 目的はOCR誤認識だけを直すことです。文章改善や言い換えは禁止です。
+
+{mode_rules}
 
 FIXにしてよい条件:
 - BがAの明確なOCR誤認識、誤字脱字、文字化け、脱落を直している
@@ -88,9 +103,11 @@ class LlmJudge:
         self,
         model: str = "qwen3.5:4b",
         api_base: str = "http://localhost:11434/v1",
+        mode: str = "general",
     ):
         self.model = model
         self.api_base = api_base.rstrip("/")
+        self.mode = mode if mode in MODE_RULES else "general"
         self._check_connection()
 
     def _check_connection(self):
@@ -145,6 +162,7 @@ class LlmJudge:
             Structured decision containing verdict, category, and reason.
         """
         prompt = JUDGE_PROMPT.format(
+            mode_rules=MODE_RULES[self.mode],
             context=context or "(なし)",
             original_token=original_token or "(不明)",
             fixed_token=fixed_token or "(不明)",

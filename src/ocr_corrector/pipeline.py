@@ -178,6 +178,7 @@ class Pipeline:
             self._judge = LlmJudge(
                 model=self.config.llm_model,
                 api_base=api_base,
+                mode=self.config.correction_mode,
             )
 
     def run(self, text: str) -> PipelineResult:
@@ -232,6 +233,7 @@ class Pipeline:
                 result = classify_with_qwen(
                     suspect, qwen_verdict,
                     escalation_threshold=self.config.escalation_threshold,
+                    mode=self.config.correction_mode,
                 )
             else:
                 result = classify_without_qwen(
@@ -317,6 +319,7 @@ class Pipeline:
                 result = classify_with_qwen(
                     suspect, qwen_verdict,
                     escalation_threshold=self.config.escalation_threshold,
+                    mode=self.config.correction_mode,
                 )
             else:
                 result = classify_without_qwen(

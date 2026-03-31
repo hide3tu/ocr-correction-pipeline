@@ -11,6 +11,9 @@ class PipelineConfig:
     bert_model: str = "cl-tohoku/bert-base-japanese-v3"
     bert_threshold: float = 0.01  # tokens below this probability are flagged
 
+    # Correction mode
+    correction_mode: str = "general"  # general, fiction
+
     # LLM settings (any OpenAI-compatible endpoint)
     llm_model: str = "Qwen3.5-4B-Q4_K_M.gguf"
     llm_enabled: bool = True
@@ -32,3 +35,4 @@ class PipelineConfig:
         "tohoku-bert-v3": "cl-tohoku/bert-base-japanese-v3",
         "luke-japanese-base-lite": "studio-ousia/luke-japanese-base-lite",
     })
+    CORRECTION_MODES: tuple[str, ...] = ("general", "fiction")

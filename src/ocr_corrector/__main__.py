@@ -126,6 +126,12 @@ def main():
         help="BERT model name (default: cl-tohoku/bert-base-japanese-v3)",
     )
     parser.add_argument(
+        "--mode",
+        choices=["general", "fiction"],
+        default="general",
+        help="Correction mode (default: general)",
+    )
+    parser.add_argument(
         "--llm-model",
         default="Qwen3.5-4B-Q4_K_M.gguf",
         help="LLM model name (default: Qwen3.5-4B-Q4_K_M.gguf)",
@@ -183,6 +189,7 @@ def main():
     # Build config
     config = PipelineConfig(
         bert_model=args.bert_model,
+        correction_mode=args.mode,
         llm_model=args.llm_model,
         llm_enabled=not args.no_llm,
         llm_api_base=_resolve_api_base(args.llm_api),

@@ -49,8 +49,20 @@ def test_classify_with_qwen_keeps_protected_category_out_of_escalation():
         suspect,
         JudgeResult("KEEP", "proper_noun", "固有名詞の可能性"),
         escalation_threshold=0.5,
+        mode="fiction",
     )
     assert result.verdict == Verdict.AUTO_KEEP
+
+
+def test_classify_with_qwen_general_mode_escalates_proper_noun_keep():
+    suspect = _suspect("阿賀野", "阿賀の", prob=0.98)
+    result = classify_with_qwen(
+        suspect,
+        JudgeResult("KEEP", "proper_noun", "固有名詞の可能性"),
+        escalation_threshold=0.5,
+        mode="general",
+    )
+    assert result.verdict == Verdict.ESCALATE
 
 
 def test_classify_with_qwen_escalates_sensitive_fix():
@@ -59,6 +71,7 @@ def test_classify_with_qwen_escalates_sensitive_fix():
         suspect,
         JudgeResult("FIX", "proper_noun", "固有名詞の誤認識"),
         escalation_threshold=0.5,
+        mode="general",
     )
     assert result.verdict == Verdict.ESCALATE
 

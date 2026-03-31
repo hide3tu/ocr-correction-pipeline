@@ -10,6 +10,10 @@ from .qwen_judge import JudgeResult
 
 SAFE_CATEGORIES = {"ocr_typo", "grammar"}
 PROTECTED_CATEGORIES = {"punctuation", "proper_noun", "dialect", "paraphrase", "unclear"}
+KEEP_ESCALATE_CATEGORIES = {
+    "general": {"ocr_typo", "grammar", "proper_noun", "dialect", "unclear"},
+    "fiction": {"ocr_typo", "grammar"},
+}
 
 
 class Verdict(str, Enum):
@@ -61,18 +65,20 @@ def classify_with_qwen(
     suspect: SuspectToken,
     qwen_verdict: JudgeResult | str,
     escalation_threshold: float = 0.50,
+    mode: str = "general",
 ) -> CorrectionResult:
     """Classify a suspect token when Qwen is enabled."""
     top_candidate, top_prob = suspect.candidates[0]
     judge = _coerce_judge_result(qwen_verdict)
     category = judge.category or "unclear"
     reason = judge.reason or None
+    keep_escalate = KEEP_ESCALATE_CATEGORIES.get(mode, KEEP_ESCALATE_CATEGORIES["general"])
 
     if judge.verdict == "FIX" and category in PROTECTED_CATEGORIES:
         verdict = Verdict.ESCALATE
     elif judge.verdict == "FIX":
         verdict = Verdict.AUTO_FIX
-    elif top_prob >= escalation_threshold and category in SAFE_CATEGORIES:
+    elif top_prob >= escalation_threshold and category in keep_escalate:
         verdict = Verdict.ESCALATE
     else:
         verdict = Verdict.AUTO_KEEP

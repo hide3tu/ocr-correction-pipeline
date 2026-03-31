@@ -50,6 +50,7 @@ def _run_pipeline_streaming(
     text: str,
     image,
     bert_model: str,
+    correction_mode: str,
     llm_model: str,
     llm_enabled: bool,
     llm_api: str,
@@ -105,6 +106,7 @@ def _run_pipeline_streaming(
 
     config = PipelineConfig(
         bert_model=bert_model_name,
+        correction_mode=correction_mode,
         llm_model=llm_model,
         llm_enabled=llm_enabled,
         llm_api_base=_resolve_api_base(llm_api),
@@ -179,6 +181,7 @@ def _run_pipeline_streaming(
 def _run_multi_image_streaming(
     images,
     bert_model: str,
+    correction_mode: str,
     llm_model: str,
     llm_enabled: bool,
     llm_api: str,
@@ -230,6 +233,7 @@ def _run_multi_image_streaming(
     # Run pipeline on combined text
     config = PipelineConfig(
         bert_model=bert_model_name,
+        correction_mode=correction_mode,
         llm_model=llm_model,
         llm_enabled=llm_enabled,
         llm_api_base=_resolve_api_base(llm_api),
@@ -352,6 +356,12 @@ def create_app():
                     value="tohoku-bert-v3",
                     label="BERTモデル",
                 )
+                correction_mode = gr.Dropdown(
+                    choices=["general", "fiction"],
+                    value="general",
+                    label="校正モード",
+                    info="硬い文書は general、小説や会話文は fiction",
+                )
                 llm_model = gr.Dropdown(
                     choices=gguf_models or [default_model],
                     value=default_model,
@@ -440,7 +450,7 @@ def create_app():
             fn=_run_pipeline_streaming,
             inputs=[
                 text_input, image_input,
-                bert_model, llm_model, llm_enabled, llm_api,
+                bert_model, correction_mode, llm_model, llm_enabled, llm_api,
                 gpu_mode, bert_threshold, escalation_threshold,
             ],
             outputs=[results_table, timing_text, status_text, ocr_output, run_btn_text, download_files],
@@ -452,7 +462,7 @@ def create_app():
             fn=_run_pipeline_streaming,
             inputs=[
                 text_input, image_input,
-                bert_model, llm_model, llm_enabled, llm_api,
+                bert_model, correction_mode, llm_model, llm_enabled, llm_api,
                 gpu_mode, bert_threshold, escalation_threshold,
             ],
             outputs=[results_table, timing_text, status_text, ocr_output, run_btn_image, download_files],
@@ -464,7 +474,7 @@ def create_app():
             fn=_run_multi_image_streaming,
             inputs=[
                 multi_image_input,
-                bert_model, llm_model, llm_enabled, llm_api,
+                bert_model, correction_mode, llm_model, llm_enabled, llm_api,
                 gpu_mode, bert_threshold, escalation_threshold,
             ],
             outputs=[results_table, timing_text, status_text, ocr_output, run_btn_multi, download_files],
