@@ -391,7 +391,7 @@ def create_app():
                     lines=4,
                     label="保護語句",
                     placeholder="キャラ名・地名・作中用語を1行1語で入力",
-                    info="ここに入れた語句を含む候補は固有名詞扱いで自動修正しない",
+                    info="ここに入れた語句を含む候補は固有名詞扱いで自動修正しない。近い表記も確認候補に出す",
                 )
                 llm_model = gr.Dropdown(
                     choices=gguf_models or [default_model],

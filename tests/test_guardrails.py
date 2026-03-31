@@ -11,6 +11,7 @@ from ocr_corrector.escalation import (
 )
 from ocr_corrector.pipeline import (
     _detect_structure_issues,
+    _find_protected_term_candidates,
     _guard_candidate,
     _resplit_by_punctuation,
 )
@@ -103,6 +104,24 @@ def test_guard_candidate_blocks_registered_protected_term():
         line="魔美は帳場までやってきて、",
         protected_terms=("魔美",),
     ) == ("proper_noun", "保護語句に含まれるため自動修正しない")
+
+
+def test_find_protected_term_candidates_surfaces_near_match():
+    candidates = _find_protected_term_candidates(
+        ["阿賀のは店先にいた。"],
+        ("阿賀野",),
+    )
+    assert len(candidates) == 1
+    assert candidates[0].original == "阿賀の"
+    assert candidates[0].candidates[0][0] == "阿賀野"
+
+
+def test_find_protected_term_candidates_skips_exact_match():
+    candidates = _find_protected_term_candidates(
+        ["阿賀野は店先にいた。"],
+        ("阿賀野",),
+    )
+    assert candidates == []
 
 
 def test_resplit_by_punctuation_splits_dialogue_at_question_mark():

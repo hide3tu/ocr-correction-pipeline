@@ -54,6 +54,27 @@ def classify_guarded_candidate(
     )
 
 
+def classify_manual_candidate(
+    suspect: SuspectToken,
+    verdict: Verdict,
+    category: str,
+    reason: str,
+    qwen_verdict: str | None = None,
+) -> CorrectionResult:
+    """Return a pre-classified correction result for non-BERT rules."""
+    top_candidate, top_prob = suspect.candidates[0]
+
+    return CorrectionResult(
+        suspect=suspect,
+        verdict=verdict,
+        suggested_fix=top_candidate,
+        suggested_prob=top_prob,
+        qwen_verdict=qwen_verdict,
+        category=category,
+        reason=reason,
+    )
+
+
 def _coerce_judge_result(value: JudgeResult | str) -> JudgeResult:
     if isinstance(value, JudgeResult):
         return value

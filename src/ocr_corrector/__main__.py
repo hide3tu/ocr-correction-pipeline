@@ -195,7 +195,7 @@ def main():
     parser.add_argument(
         "--protected-term",
         action="append",
-        help="Known name/term to protect from auto-correction (repeatable)",
+        help="Known name/term to protect from auto-correction and surface as near-match review (repeatable)",
     )
     parser.add_argument(
         "--protected-terms-file",

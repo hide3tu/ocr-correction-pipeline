@@ -11,7 +11,9 @@ from .bert_scanner import BertScanner, SuspectToken
 from .config import PipelineConfig
 from .escalation import (
     CorrectionResult,
+    Verdict,
     classify_guarded_candidate,
+    classify_manual_candidate,
     classify_with_qwen,
     classify_without_qwen,
 )
@@ -260,6 +262,135 @@ def _touches_protected_term(
     return bool(overlapping) and len(overlapping) == len(original_spans)
 
 
+def _is_wordish_span(text: str) -> bool:
+    return bool(text) and all((not ch.isspace()) and ch not in PUNCTUATION_CHARS for ch in text)
+
+
+def _edit_distance_with_limit(lhs: str, rhs: str, limit: int) -> int | None:
+    if abs(len(lhs) - len(rhs)) > limit:
+        return None
+    if lhs == rhs:
+        return 0
+
+    previous = list(range(len(rhs) + 1))
+    for i, ch_lhs in enumerate(lhs, start=1):
+        current = [i]
+        min_current = current[0]
+        for j, ch_rhs in enumerate(rhs, start=1):
+            cost = 0 if ch_lhs == ch_rhs else 1
+            value = min(
+                previous[j] + 1,
+                current[j - 1] + 1,
+                previous[j - 1] + cost,
+            )
+            current.append(value)
+            if value < min_current:
+                min_current = value
+        if min_current > limit:
+            return None
+        previous = current
+    distance = previous[-1]
+    return distance if distance <= limit else None
+
+
+def _protected_term_match_score(observed: str, protected_term: str) -> float | None:
+    max_len = max(len(observed), len(protected_term))
+    if max_len < 2 or observed == protected_term:
+        return None
+
+    limit = 1 if max_len <= 4 else 2
+    distance = _edit_distance_with_limit(observed, protected_term, limit)
+    if distance is None or distance == 0:
+        return None
+
+    shared = set(observed) & set(protected_term)
+    if not shared:
+        return None
+
+    score = 1.0 - (distance / (max_len + 1))
+    return score if score >= 0.55 else None
+
+
+def _make_suspect(
+    original: str,
+    fixed: str,
+    probability: float,
+    line_index: int,
+) -> SuspectToken:
+    return SuspectToken(
+        position=0,
+        original=original,
+        probability=0.0,
+        candidates=[(fixed, probability)],
+        line_index=line_index,
+    )
+
+
+def _is_protected_term_candidate(
+    suspect: SuspectToken,
+    protected_terms: tuple[str, ...],
+) -> bool:
+    return (
+        suspect.position == 0
+        and bool(suspect.candidates)
+        and suspect.candidates[0][0] in protected_terms
+        and suspect.original != suspect.candidates[0][0]
+    )
+
+
+def _find_protected_term_candidates(
+    lines: list[str],
+    protected_terms: tuple[str, ...],
+) -> list[SuspectToken]:
+    """Find near-matches to protected terms and surface them for review."""
+    if not protected_terms:
+        return []
+
+    candidates: list[SuspectToken] = []
+    seen: set[tuple[int, str, str]] = set()
+
+    for line_index, line in enumerate(lines):
+        compact_line = line.strip()
+        if not compact_line:
+            continue
+
+        for term in protected_terms:
+            term_len = len(term)
+            if term_len < 2:
+                continue
+            if term in line:
+                continue
+
+            span_lengths = range(max(2, term_len - 1), term_len + 2)
+            best_for_term: tuple[float, int, str] | None = None
+
+            for span_len in span_lengths:
+                if span_len > len(line):
+                    continue
+                for start in range(0, len(line) - span_len + 1):
+                    observed = line[start:start + span_len]
+                    if not _is_wordish_span(observed):
+                        continue
+                    score = _protected_term_match_score(observed, term)
+                    if score is None:
+                        continue
+                    candidate = (score, -abs(span_len - term_len), observed)
+                    if best_for_term is None or candidate > best_for_term:
+                        best_for_term = candidate
+
+            if best_for_term is None:
+                continue
+
+            score, _, observed = best_for_term
+            key = (line_index, observed, term)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(_make_suspect(observed, term, score, line_index))
+
+    return candidates
+
+
 def _guard_candidate(
     suspect: SuspectToken,
     mode: str = "general",
@@ -426,8 +557,19 @@ class Pipeline:
             min_prob=self.config.min_candidate_prob,
             skip_subword=self.config.skip_subword,
         )
+        protected_candidates = _find_protected_term_candidates(lines, protected_terms)
+        if protected_candidates:
+            timing["protected_terms"] = time.perf_counter() - t0
+            filtered.extend(protected_candidates)
+        else:
+            timing["protected_terms"] = 0.0
         timing["filter"] = time.perf_counter() - t0
-        logger.info("Filtered: %d -> %d suspects", len(raw_suspects), len(filtered))
+        logger.info(
+            "Filtered: %d -> %d suspects (+%d protected-term candidates)",
+            len(raw_suspects),
+            len(filtered),
+            len(protected_candidates),
+        )
 
         # Step 3: Classify each suspect
         corrections: list[CorrectionResult] = []
@@ -440,7 +582,14 @@ class Pipeline:
                 if suspect.line_index < len(structure_issues)
                 else None
             )
-            if structure_issue is not None:
+            if _is_protected_term_candidate(suspect, protected_terms):
+                result = classify_manual_candidate(
+                    suspect,
+                    verdict=Verdict.ESCALATE,
+                    category="proper_noun",
+                    reason=f"保護語句「{suspect.candidates[0][0]}」に近い表記のため確認",
+                )
+            elif structure_issue is not None:
                 result = classify_guarded_candidate(suspect, "structure", structure_issue)
             else:
                 guard = _guard_candidate(
@@ -543,6 +692,8 @@ class Pipeline:
             min_prob=self.config.min_candidate_prob,
             skip_subword=self.config.skip_subword,
         )
+        protected_candidates = _find_protected_term_candidates(lines, protected_terms)
+        filtered.extend(protected_candidates)
 
         yield "bert", {
             "raw": len(raw_suspects),
@@ -563,7 +714,14 @@ class Pipeline:
                 if suspect.line_index < len(structure_issues)
                 else None
             )
-            if structure_issue is not None:
+            if _is_protected_term_candidate(suspect, protected_terms):
+                result = classify_manual_candidate(
+                    suspect,
+                    verdict=Verdict.ESCALATE,
+                    category="proper_noun",
+                    reason=f"保護語句「{suspect.candidates[0][0]}」に近い表記のため確認",
+                )
+            elif structure_issue is not None:
                 result = classify_guarded_candidate(suspect, "structure", structure_issue)
             else:
                 guard = _guard_candidate(
